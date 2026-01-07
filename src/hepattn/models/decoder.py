@@ -19,6 +19,7 @@ from hepattn.models.task import IncidenceRegressionTask, ObjectClassificationTas
 from hepattn.utils.local_ca import auto_local_ca_mask
 from hepattn.utils.model_utils import unmerge_inputs
 
+from hepattn.models.linformer import LinformerDecoderAttention
 
 class MaskFormerDecoder(nn.Module):
     def __init__(
@@ -269,12 +270,19 @@ class MaskFormerDecoderLayer(nn.Module):
         dense_kwargs = dense_kwargs or {}
 
         residual = partial(Residual, dim=dim)
-        self.q_ca = residual(Attention(dim, qkv_norm=qkv_norm, norm=norm, **attn_kwargs), norm=attn_norm)
-        self.q_sa = residual(Attention(dim, qkv_norm=qkv_norm, norm=norm, **attn_kwargs), norm=attn_norm)
+        if attn_type == "linformer":
+            self.q_ca = residual(LinformerDecoderAttention(dim, seq_len=256, heads=attn_kwargs["num_heads"]), norm=attn_norm)
+            self.q_sa = residual(LinformerDecoderAttention(dim, seq_len=256, heads=attn_kwargs["num_heads"]), norm=attn_norm)
+        else:
+            self.q_ca = residual(Attention(dim, qkv_norm=qkv_norm, norm=norm, **attn_kwargs), norm=attn_norm)
+            self.q_sa = residual(Attention(dim, qkv_norm=qkv_norm, norm=norm, **attn_kwargs), norm=attn_norm)
         self.q_dense = residual(Dense(dim, **dense_kwargs), norm=norm, post_norm=dense_post_norm)
 
         if self.bidirectional_ca:
-            self.kv_ca = residual(Attention(dim, qkv_norm=qkv_norm, norm=norm, **attn_kwargs), norm=attn_norm)
+            if attn_type == "linformer":
+                self.kv_ca = residual(LinformerDecoderAttention(dim, seq_len=256, heads=attn_kwargs["num_heads"]), norm=attn_norm)
+            else:
+                self.kv_ca = residual(Attention(dim, qkv_norm=qkv_norm, norm=norm, **attn_kwargs), norm=attn_norm)
             self.kv_dense = residual(Dense(dim, **dense_kwargs), norm=norm, post_norm=dense_post_norm)
 
     def forward(

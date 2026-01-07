@@ -132,7 +132,10 @@ class EncoderLayer(nn.Module):
 
         self.dim = dim
         residual = partial(Residual, dim=dim, layer_scale=layer_scale, drop_path=drop_path)
-        self.attn = residual(Attention(self.dim, qkv_norm=qkv_norm, norm=norm, **attn_kwargs), norm=attn_norm)
+        if attn_kwargs["attn_type"] == "linformer":
+            self.attn = residual(LinformerSelfAttention(self.dim, seq_len=256, heads=attn_kwargs["num_heads"]), norm=attn_norm)
+        else:
+            self.attn = residual(Attention(self.dim, qkv_norm=qkv_norm, norm=norm, **attn_kwargs), norm=attn_norm)
         self.dense = residual(Dense(self.dim, **dense_kwargs), norm=norm, post_norm=dense_post_norm)
 
     def forward(self, x: Tensor, **kwargs) -> Tensor:
