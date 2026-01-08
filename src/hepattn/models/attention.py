@@ -188,9 +188,10 @@ class Attention(nn.Module):
         self.value_residual = value_residual
         self.is_first_layer = is_first_layer
 
-        self.in_proj_weight = nn.Parameter(torch.empty(3 * dim, dim))
-        self.in_proj_bias = nn.Parameter(torch.empty(3 * dim)) if bias else None
-        self.out_proj = nn.Linear(dim, dim, bias=bias)
+        if attn_type != "linformer":
+            self.in_proj_weight = nn.Parameter(torch.empty(3 * dim, dim))
+            self.in_proj_bias = nn.Parameter(torch.empty(3 * dim)) if bias else None
+            self.out_proj = nn.Linear(dim, dim, bias=bias)
 
         if self.value_residual and not self.is_first_layer:
             self.value_residual_mix = nn.Sequential(nn.Linear(dim, num_heads), nn.Sigmoid())
