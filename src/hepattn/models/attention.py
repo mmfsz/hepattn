@@ -204,7 +204,8 @@ class Attention(nn.Module):
             self.v_norm = norm_cls(dim)
 
         self.set_backend(attn_type, torch_compile=torch_compile, window_size=window_size)
-        self.reset_parameters()
+        if attn_type != "linformer":
+            self.reset_parameters()
 
         if window_size and not self.window_size:
             raise ValueError("window_size not set correctly")
