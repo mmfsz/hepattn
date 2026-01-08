@@ -409,7 +409,7 @@ class Attention(nn.Module):
         elif self.attn_type == "flash":
             out = self.attn(q, k, v, window_size=self.window_size)
         elif self.attn_type == "linformer":
-            out = self.attn(self.recombine_heads(q), self.recombine_heads(k), self.recombine_heads(v), attn_mask=attn_mask)
+            out = self.attn(q, k, v, attn_mask=attn_mask)
             return out # linformer is a little special
         else:
             raise ValueError(f"Invalid attention type: {self.attn_type}")
