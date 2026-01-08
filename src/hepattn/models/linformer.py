@@ -28,19 +28,19 @@ class LinformerAttention(nn.Module):
         dim_head = default(dim_head, dim // heads)
         self.dim_head = dim_head
 
-        #self.to_q = nn.Linear(dim, dim_head * heads, bias = False)
+        self.to_q = nn.Linear(dim, dim_head * heads, bias = False)
 
         kv_dim = dim_head if one_kv_head else (dim_head * heads)
-        #self.to_k = nn.Linear(dim, kv_dim, bias = False)
+        self.to_k = nn.Linear(dim, kv_dim, bias = False)
         self.proj_k = nn.Parameter(init_(torch.zeros(seq_len, k)))
 
         self.share_kv = share_kv
         if not share_kv:
-            #self.to_v = nn.Linear(dim, kv_dim, bias = False)
+            self.to_v = nn.Linear(dim, kv_dim, bias = False)
             self.proj_v = nn.Parameter(init_(torch.zeros(seq_len, k)))
 
         self.dropout = nn.Dropout(dropout)
-        #self.to_out = nn.Linear(dim_head * heads, dim)
+        self.to_out = nn.Linear(dim_head * heads, dim)
 
     def forward(self, q, k=None, v=None, attn_mask=None, **kwargs):
         #print("q.shape", q.shape)
@@ -52,12 +52,12 @@ class LinformerAttention(nn.Module):
         assert k.shape[1] == v.shape[1], f"{k.shape[1]} ?= {v.shape[1]}"
         assert kv_len <= self.seq_len, f'the sequence length of the key / values must be {self.seq_len} - {kv_len} given'
 
-        queries = q
+        queries = self.to_q(q)
 
         proj_seq_len = lambda args: torch.einsum('bnd,nk->bkd', *args)
 
-        keys = k if k is not None else q
-        values = v if v is not None else q
+        keys = self.to_k(k) if k is not None else self.to_k(q)
+        values = self.to_v(v) if v is not None else self.to_v(q)
 
         kv_projs = (self.proj_k, self.proj_v if not self.share_kv else self.proj_k)
 
@@ -85,5 +85,5 @@ class LinformerAttention(nn.Module):
         out = torch.einsum('bhnk,bhkd->bhnd', attn, values)
 
         # split heads
-        #out = out.transpose(1, 2).reshape(b, n, -1)
-        return out #self.to_out(out)
+        out = out.transpose(1, 2).reshape(b, n, -1)
+        return self.to_out(out)

@@ -369,7 +369,8 @@ class Attention(nn.Module):
             assert self.attn_type in ATTN_BIAS_ATTN_TYPES, msg
 
         # Prepare queries, keys, and values
-        q, k, v = self._prepare_qkv(q, k, v, initial_values)
+        if self.attn_type != "linformer":
+            q, k, v = self._prepare_qkv(q, k, v, initial_values)
 
         # Handle flash-varlen attention
         if self.attn_type == "flash-varlen":
@@ -409,6 +410,7 @@ class Attention(nn.Module):
             out = self.attn(q, k, v, window_size=self.window_size)
         elif self.attn_type == "linformer":
             out = self.attn(self.recombine_heads(q), self.recombine_heads(k), self.recombine_heads(v), attn_mask=attn_mask)
+            return out # linformer is a little special
         else:
             raise ValueError(f"Invalid attention type: {self.attn_type}")
 
