@@ -22,9 +22,9 @@ data:
 
   num_objects: &num_particles 150
 
-  train_path: /projects/u5ar/data/clic/train_clic_fix.root
-  valid_path: /projects/u5ar/data/clic/val_clic_fix.root
-  test_path: /projects/u5ar/data/clic/test_clic_common_infer.root
+  train_path: /home/jovyan/hepattn-data/train_clic_fix.root
+  valid_path: /home/jovyan/hepattn-data/val_clic_fix.root
+  test_path: /home/jovyan/hepattn-data/test_clic_common_infer.root
 
   num_workers: 16
   num_train: -1
@@ -135,6 +135,7 @@ model:
           hybrid_norm: true
           attn_kwargs:
             num_heads: 16
+            attn_type: linformer
 
       matcher:
         class_path: hepattn.models.matcher.Matcher

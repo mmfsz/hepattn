@@ -6,8 +6,16 @@ import torch.nn.functional as F
 # this is a trivial rewriting of https://github.com/lucidrains/linformer
 # into a form that better fits the hepattn decoder setup
 
+def default(val, default_val):
+    return val if val is not None else default_val
 
-class LinformerDecoderAttention(nn.Module):
+def init_(tensor):
+    dim = tensor.shape[-1]
+    std = 1 / math.sqrt(dim)
+    tensor.uniform_(-std, std)
+    return tensor
+
+class LinformerAttention(nn.Module):
     def __init__(self, dim, seq_len, k = 256, heads = 8, dim_head = None, one_kv_head = False, share_kv = False, dropout = 0.):
         super().__init__()
         assert (dim % heads) == 0, 'dimension must be divisible by the number of heads'
@@ -20,22 +28,23 @@ class LinformerDecoderAttention(nn.Module):
         dim_head = default(dim_head, dim // heads)
         self.dim_head = dim_head
 
-        self.to_q = nn.Linear(dim, dim_head * heads, bias = False)
+        #self.to_q = nn.Linear(dim, dim_head * heads, bias = False)
 
         kv_dim = dim_head if one_kv_head else (dim_head * heads)
-        self.to_k = nn.Linear(dim, kv_dim, bias = False)
+        #self.to_k = nn.Linear(dim, kv_dim, bias = False)
         self.proj_k = nn.Parameter(init_(torch.zeros(seq_len, k)))
 
         self.share_kv = share_kv
         if not share_kv:
-            self.to_v = nn.Linear(dim, kv_dim, bias = False)
+            #self.to_v = nn.Linear(dim, kv_dim, bias = False)
             self.proj_v = nn.Parameter(init_(torch.zeros(seq_len, k)))
 
         self.dropout = nn.Dropout(dropout)
-        self.to_out = nn.Linear(dim_head * heads, dim)
+        #self.to_out = nn.Linear(dim_head * heads, dim)
 
-    def forward(self, q, k=None, v=None, **kwargs):
-        b, n, d, d_h, h, k = *q.shape, self.dim_head, self.heads, self.k
+    def forward(self, q, k=None, v=None, attn_mask=None, **kwargs):
+        #print("q.shape", q.shape)
+        b, n, d, d_h, h, k_num = *q.shape, self.dim_head, self.heads, self.k
 
         kv_len = n if k is None else k.shape[1]
         if k is not None:
@@ -43,7 +52,7 @@ class LinformerDecoderAttention(nn.Module):
         assert k.shape[1] == v.shape[1], f"{k.shape[1]} ?= {v.shape[1]}"
         assert kv_len <= self.seq_len, f'the sequence length of the key / values must be {self.seq_len} - {kv_len} given'
 
-        queries = self.to_q(x)
+        queries = q
 
         proj_seq_len = lambda args: torch.einsum('bnd,nk->bkd', *args)
 
@@ -62,15 +71,19 @@ class LinformerDecoderAttention(nn.Module):
         # merge head into batch for queries and key / values
         queries = queries.reshape(b, n, h, -1).transpose(1, 2)
 
-        merge_key_values = lambda t: t.reshape(b, k, -1, d_h).transpose(1, 2).expand(-1, h, -1, -1)
+        merge_key_values = lambda t: t.reshape(b, k_num, -1, d_h).transpose(1, 2).expand(-1, h, -1, -1)
         keys, values = map(merge_key_values, (keys, values))
 
         # attention
         dots = torch.einsum('bhnd,bhkd->bhnk', queries, keys) * (d_h ** -0.5)
+        if attn_mask is not None:
+            dots[..., :kv_len].masked_fill((attn_mask == 0)[:, None, ...], float("-inf"))
+            dots[..., kv_len:] = float("-inf") # mask out anything past the current seq_len too.
         attn = dots.softmax(dim=-1)
         attn = self.dropout(attn)
+        
         out = torch.einsum('bhnk,bhkd->bhnd', attn, values)
 
         # split heads
-        out = out.transpose(1, 2).reshape(b, n, -1)
-        return self.to_out(out)
+        #out = out.transpose(1, 2).reshape(b, n, -1)
+        return out #self.to_out(out)

@@ -20,13 +20,16 @@ from torch.nn.functional import scaled_dot_product_attention
 from hepattn.models.norm import NORM_TYPES
 from hepattn.utils.bert_padding import pad_input, unpad_input
 
-ATTN_TYPES = {"torch": scaled_dot_product_attention, "flex": flex_attention, "flash": flash_attn_func, "flash-varlen": flash_attn_varlen_func}
+from hepattn.models.linformer import LinformerAttention
+
+ATTN_TYPES = {"torch": scaled_dot_product_attention, "flex": flex_attention, "flash": flash_attn_func, 
+              "flash-varlen": flash_attn_varlen_func, "linformer": lambda q, k, v, **kwargs: None}
 
 # Which attentiom types support varlen / kv padding
-VARLEN_ATTN_TYPES = ["torch", "flash-varlen"]
+VARLEN_ATTN_TYPES = ["torch", "flash-varlen", "linformer"]
 
 # Which attention types support attention masking
-ATTN_MASK_ATTN_TYPES = ["torch", "flex"]
+ATTN_MASK_ATTN_TYPES = ["torch", "flex", "linformer"]
 
 # Which attention types support attention biasing
 ATTN_BIAS_ATTN_TYPES = ["torch"]
@@ -218,7 +221,10 @@ class Attention(nn.Module):
         self.attn_type = attn_type
         if attn_type not in ATTN_TYPES:
             raise ValueError(f"Invalid attention type: {attn_type}")
-        self.attn = ATTN_TYPES[attn_type]
+        if attn_type == "linformer":
+            self.attn = LinformerAttention(self.dim, seq_len=256, heads=self.num_heads, dim_head=self.head_dim)
+        else:
+            self.attn = ATTN_TYPES[attn_type]
 
         self.window_size = None
         if attn_type in FLASH_ATTN_TYPES:
@@ -401,6 +407,8 @@ class Attention(nn.Module):
             out = self.attn(q, k, v, attn_mask=attn_mask)
         elif self.attn_type == "flash":
             out = self.attn(q, k, v, window_size=self.window_size)
+        elif self.attn_type == "linformer":
+            out = self.attn(self.recombine_heads(q), self.recombine_heads(k), self.recombine_heads(v), attn_mask=attn_mask)
         else:
             raise ValueError(f"Invalid attention type: {self.attn_type}")
 

@@ -10,6 +10,7 @@ from hepattn.models.attention import Attention, repad_from_flash_varlen, unpad_f
 from hepattn.models.dense import Dense
 from hepattn.models.norm import NORM_TYPES, get_hybrid_norm_config
 
+
 create_block_mask = torch.compile(create_block_mask, dynamic=True)  # ty: ignore[invalid-assignment]
 
 SCORE_MODS = {
@@ -132,10 +133,7 @@ class EncoderLayer(nn.Module):
 
         self.dim = dim
         residual = partial(Residual, dim=dim, layer_scale=layer_scale, drop_path=drop_path)
-        if attn_kwargs["attn_type"] == "linformer":
-            self.attn = residual(LinformerSelfAttention(self.dim, seq_len=256, heads=attn_kwargs["num_heads"]), norm=attn_norm)
-        else:
-            self.attn = residual(Attention(self.dim, qkv_norm=qkv_norm, norm=norm, **attn_kwargs), norm=attn_norm)
+        self.attn = residual(Attention(self.dim, qkv_norm=qkv_norm, norm=norm, **attn_kwargs), norm=attn_norm)
         self.dense = residual(Dense(self.dim, **dense_kwargs), norm=norm, post_norm=dense_post_norm)
 
     def forward(self, x: Tensor, **kwargs) -> Tensor:

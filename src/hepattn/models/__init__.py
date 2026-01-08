@@ -8,7 +8,7 @@ from hepattn.models.input import InputNet
 from hepattn.models.maskformer import MaskFormer
 from hepattn.models.norm import CustomRMSNorm, FastLayerNorm
 from hepattn.models.posenc import FourierPositionEncoder, PositionEncoder
-from hepattn.models.linformer import LinformerDecoderAttn
+from hepattn.models.linformer import LinformerAttention
 
 __all__ = [
     "Attention",
@@ -22,7 +22,7 @@ __all__ = [
     "HitFilter",
     "InputNet",
     "LayerScale",
-    "LinforerDecoderAttn",
+    "LinformerAttention",
     "MaskFormer",
     "MaskFormerDecoder",
     "MaskFormerDecoderLayer",
