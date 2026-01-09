@@ -150,6 +150,8 @@ class Attention(nn.Module):
         norm: str | None = None,
         value_residual: bool = False,
         is_first_layer: bool = False,
+        linformer_proj_dim: int = 256,
+        linformer_seq_len: int = 256,
     ) -> None:
         """Multi-head attention with optional QKV normalization.
 
@@ -166,6 +168,8 @@ class Attention(nn.Module):
                 Must be one of: LayerNorm, RMSNorm, FastLayerNorm, CustomRMSNorm, SimpleRMSNorm, DyT.
             value_residual: Whether to use value residual connections across layers.
             is_first_layer: Whether this is the first layer (for value residual).
+            linformer_proj_dim: dimensionality of the low rank projection
+            linformer_seq_len: max sequence length for the linformer
 
         Raises:
             ValueError: If qkv_norm is True but norm is not provided, or if norm type is unsupported.
@@ -187,6 +191,8 @@ class Attention(nn.Module):
         self.qkv_norm = qkv_norm
         self.value_residual = value_residual
         self.is_first_layer = is_first_layer
+        self.linformer_proj_dim = linformer_proj_dim
+        self.linformer_seq_len = linformer_seq_len
 
         if attn_type != "linformer":
             self.in_proj_weight = nn.Parameter(torch.empty(3 * dim, dim))
@@ -224,7 +230,13 @@ class Attention(nn.Module):
         if attn_type not in ATTN_TYPES:
             raise ValueError(f"Invalid attention type: {attn_type}")
         if attn_type == "linformer":
-            self.attn = LinformerAttention(self.dim, seq_len=256, heads=self.num_heads, dim_head=self.head_dim)
+            self.attn = LinformerAttention(
+                self.dim,
+                seq_len=self.linformer_seq_len,
+                k=self.linformer_proj_dim,
+                heads=self.num_heads,
+                dim_head=self.head_dim
+            )
         else:
             self.attn = ATTN_TYPES[attn_type]
 
