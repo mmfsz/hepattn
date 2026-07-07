@@ -29,15 +29,14 @@ the `/blue` quota (the submit scripts bind both `/blue` and `/cmsuf` into the co
 ```
 
 Configs point at these paths directly (`data.train_path` / `valid_path` / `test_path`).
-If you write a new config, make sure its paths point here and **not** at a Jupyter/
-container path like `/home/jovyan/...`, which does not exist on the compute nodes.
+
 
 ## Submitting a training
 
 All commands run from the experiment directory:
 
 ```shell
-cd /blue/avery/m.mazza/projects/fastml/hepattn/src/hepattn/experiments/clic
+cd /blue/avery/$USER/hepattn/src/hepattn/experiments/clic
 ```
 
 ### Submit scripts
@@ -94,7 +93,7 @@ python main.py fit --config configs/clic_v7.yaml --trainer.devices=1
 - **SLURM stdout/stderr:** `slurm_logs/slurm-<jobid>.<jobname>.out`.
 
 ```shell
-squeue -u m.mazza                          # your queued/running jobs
+squeue -u $USER                            # your queued/running jobs
 tail -f slurm_logs/slurm-<jobid>.*.out     # live training log
 sacct -j <jobid> --format=JobID,State,Elapsed,MaxRSS   # after it finishes
 scancel <jobid>                            # cancel
@@ -118,5 +117,7 @@ python main.py test \
 
 Also remove the `Compile` callback and set attention to `torch` in the config before
 testing. There are ready-made eval scripts: `submit_eval_hpg_l4.sh` and
-`submit_eval_test_hpg_l4.sh`. Produce performance plots with
+`submit_eval_test_hpg_l4.sh`. 
+
+Produce performance plots with
 [`notebooks/performance.ipynb`](./notebooks/performance.ipynb).
