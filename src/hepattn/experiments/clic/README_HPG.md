@@ -8,21 +8,21 @@ on UF's HiPerGator cluster. For the model/paper overview and data-format details
 
 ## Prerequisites
 
-- **Account/partitions:** SLURM account `avery`. GPU partitions used here:
+- **GPU partitions:**
   - `hpg-b200` — B200 192 GB (up to 4/node)
   - `hpg-turin` — L4 24 GB (up to 3/node)
 - **Container + env:** the repo ships a pixi Apptainer image at the repo root
   (`pixi.sif`). Training runs inside it via `apptainer run --nv ... pixi run ...`;
   the submit scripts already do this — you don't need to enter it by hand to submit.
-- **CUDA module:** `module load cuda/12.8.1` (matches the container build; already in
-  the submit scripts).
+- **CUDA module:** `module load cuda/12.8.1` (matches the container build; already in the submit scripts).
 
 ## Data
 
-The CLIC ROOT files live on `/blue`:
+The CLIC ROOT files live on the CMS store (`/cmsuf`), kept off `/blue` to stay under
+the `/blue` quota (the submit scripts bind both `/blue` and `/cmsuf` into the container):
 
 ```
-/blue/avery/m.mazza/projects/fastml/hepattn/data/clic/
+/cmsuf/data/store/user/mmazza/hepattn_clic_data/
 ├── train_clic_fix.root          # 12 GB
 ├── val_clic_fix.root            # 309 MB
 └── test_clic_common_infer.root  # 250 MB
@@ -110,7 +110,7 @@ the required overrides — inference data mode, fp32, and switching attention to
 ```shell
 python main.py test \
     --config logs/<run-folder>/config.yaml \
-    --data.test_path /blue/avery/m.mazza/projects/fastml/hepattn/data/clic/test_clic_common_infer.root \
+    --data.test_path /cmsuf/data/store/user/mmazza/hepattn_clic_data/test_clic_common_infer.root \
     --data.is_inference true \
     --trainer.precision 32-true \
     --matmul_precision highest
