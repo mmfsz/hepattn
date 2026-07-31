@@ -100,4 +100,9 @@ PYBIND11_MODULE(_core, m) {
         py::arg("cost_matrix"), py::arg("omp")=true, py::arg("eps")=true,
         "Solve the linear sum assignment problem"
     );
+
+    // Capability flag: this build releases the GIL while solving, so callers can
+    // safely solve a batch across a thread pool. Builds without it are absent this
+    // attribute entirely, which lets callers warn instead of silently serialising.
+    m.attr("releases_gil") = true;
 }

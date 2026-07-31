@@ -18,6 +18,13 @@ cd hepattn/src/hepattn/experiments/clic/
 
 If you don't already have the CLIC data, download it from one of the locations listed in the [CLIC Data](#clic-data) section below.
 
+**📝 Note**: The training config uses the `lap1015_late` Hungarian solver, which relies
+on the vendored [`src/lap1015`](../../../lap1015) extension being built from this
+repository's source (it is rebuilt whenever `hepattn` is pip-installed from source).
+An older build that does not release the GIL makes threaded matching roughly 2x slower
+than `scipy`; a warning is emitted at startup if one is detected. See the
+[top level README](../../../../README.md#the-lap1015-extension) for details.
+
 To run the model, use the following commands:
 
 ```shell

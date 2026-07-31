@@ -63,6 +63,17 @@ pixi install --locked
 See the [pyproject.toml](pyproject.toml) or [setup/isambard.md](setup/isambard.md)
 for more information.
 
+### The `lap1015` Extension
+
+The `lap1015` linear assignment solver is vendored in [`src/lap1015`](src/lap1015)
+and is compiled from that source whenever `hepattn` is pip-installed from source
+(which `pixi install` does). It must be built from *this* repository's source, and
+not from an older or upstream build, because only this version releases the GIL
+while solving. Without that, the threaded matcher serialises and the CLIC default
+`lap1015_late` solver is roughly 2x slower than `scipy`. A warning is emitted when
+the matcher is constructed if a build without the GIL release is detected; if you
+see it, reinstall the environment to rebuild the extension.
+
 ## 🌟 Activating the Environment
 
 To run the installed environment, use:

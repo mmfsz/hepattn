@@ -93,6 +93,22 @@ else:
     )
 
 
+def _lap1015_releases_gil() -> bool:
+    """Whether the imported lap1015 extension was built with the GIL released around the solve.
+
+    Builds from this repo's vendored ``src/lap1015`` set ``releases_gil`` on the module;
+    older or upstream builds have no such attribute, in which case threaded matching
+    serialises on the GIL.
+    """
+    module = globals().get("lap1015")
+    if module is None:
+        return False
+    if getattr(module, "releases_gil", False):
+        return True
+    # Fall back to the compiled extension, in case an older __init__.py does not re-export it.
+    return bool(getattr(getattr(module, "_core", None), "releases_gil", False))
+
+
 def match_individual(solver_fn, cost: np.ndarray, default_idx: np.ndarray) -> np.ndarray:
     # No valid targets: skip the solver — lap1015 returns uninitialised memory for
     # empty cost matrices, and the identity permutation is correct for every solver.
@@ -223,6 +239,15 @@ class Matcher(nn.Module):
             raise ValueError(f"Unknown solver: {default_solver}. Available solvers: {list(SOLVERS.keys())}")
         if parallel_backend not in {"thread", "process"}:
             raise ValueError(f"parallel_backend must be 'thread' or 'process', got: {parallel_backend}")
+        if default_solver.startswith("lap1015") and parallel_solver and parallel_backend == "thread" and not _lap1015_releases_gil():
+            warnings.warn(
+                f"The installed lap1015 extension does not release the GIL while solving, so the '{default_solver}' solver "
+                "cannot run in parallel: threaded matching will serialise and be roughly 2x slower than the 'scipy' solver. "
+                "Rebuild the extension from this repo's vendored source in src/lap1015 (e.g. by reinstalling hepattn from "
+                "source), or set default_solver: scipy in the config.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         self.solver = default_solver
         self.adaptive_solver = adaptive_solver
         self.adaptive_check_interval = adaptive_check_interval
