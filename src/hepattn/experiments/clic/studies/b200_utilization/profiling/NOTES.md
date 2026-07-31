@@ -272,13 +272,48 @@ variable vs job 38451000.
 | `training_step` | **2.387 s/step** | 3.051 s/step | +0.66 s |
 | `backward` (control) | 0.628 s/step | 0.632 s/step | identical |
 
-Not investigated further, but the likely cause is NUMA: `hpg-b200` nodes are two
-56-core sockets, so a 32-thread pool necessarily spans both, while the cost data
-sits in one pinned buffer allocated on a single socket — every thread on the far
-socket pays cross-socket memory latency on a memory-bound workload. Oversubscription
-against the 16 dataloader workers may contribute. **Keep `n_jobs: 16` and
-`--cpus-per-task=16`.** If anyone retries this, pin the pool with `numactl`
-or use one pool per socket rather than simply raising the count.
+### Follow-up benchmark (job 38458388): the NUMA explanation was WRONG
+
+The first explanation recorded here — that a 32-thread pool must straddle the node's
+two sockets — does not survive scrutiny: a socket has 56 cores, so 32 fits inside one
+with room to spare, and if placement were arbitrary enough to scatter 32 threads it
+would scatter 16 too. [`bench_matcher_threads.py`](bench_matcher_threads.py) tested it
+directly on a B200 node with `--cpus-per-task=48`:
+
+- **Placement is not the cause.** `Cpus_allowed_list: 60-71,76-111` — all 48 cores
+  landed inside a *single* NUMA domain (`node1` = cores 56-111). `hpg-b200` nodes
+  expose exactly 2 NUMA domains, one per socket. A 32-core allocation fits in one.
+- **The solve saturates at ~16 threads**, on cost matrices shaped like the real ones
+  (10,240 problems, 921.6 MB, the same as one training step):
+
+| n_jobs | lap1015_late | scipy |
+|---|---|---|
+| 1 | 3.32 s (1.0×) | 1.23 s (1.0×) |
+| 8 | 0.41 s (8.0×) | 0.29 s (4.3×) |
+| **16** | **0.23 s (14.2×)** | **0.27 s (4.5×)** |
+| 24 | 0.24 s (13.6×) | 0.26 s (4.7×) |
+| 32 | 1.67 s (2.0×) | 1.91 s (0.6×) |
+| 48 | 1.16 s (2.8×) | 1.41 s (0.9×) |
+
+So there was never any headroom past 16 to buy: 24 threads are no faster than 16, and
+at ≥32 both solvers fall off a cliff — which reproduces the end-to-end regression but
+in isolation, with placement ruled out.
+
+**The mechanism at ≥32 is still not identified.** It is not NUMA, and it is not
+solver-specific (both regress by a similar factor). It is also not a clean monotonic
+trend — 48 threads are *faster* than 32 — which is a warning sign. This benchmark has
+a known confound: `_get_thread_pool` caches pools forever, so by the time it measures
+n_jobs=32 the pools from every earlier count are still alive (~55 idle threads), and
+the counts are measured in ascending order in one process. Before anyone draws a
+mechanistic conclusion, re-run with a fresh process per thread count and a randomised
+order. Candidate mechanisms to test then: GIL contention on the per-event Python work
+in `match_individual` (array conversion, permutation validation, `np.bincount`), which
+no amount of GIL release in the C++ solve can parallelise; and memory-bandwidth
+saturation on a 921.6 MB working set.
+
+**Operationally this does not matter: keep `n_jobs: 16` and `--cpus-per-task=16`.**
+16 is at the saturation point by direct measurement, so the tuning question is closed
+even though the cliff is not explained.
 
 ## Phase 2 re-run — post-fix trace (job 38452195, 2026-07-31)
 

@@ -186,9 +186,13 @@ wall-clock. The fixes below shrink the GPU-independent part; they do not change 
    3.72 s/step at `n_jobs: 32` + `--cpus-per-task=32`, vs 3.05 s/step at 16).
    `hpg-b200` nodes are 112 physical cores / 8 GPUs = 14 per GPU, so `--cpus-per-task=16`
    was already above fair share; the `avery` QoS caps the account (`cpu=430`), not the
-   job, so the 32-core request was legal, just counterproductive. Likely NUMA — the two
-   56-core sockets mean a 32-thread pool spans both while the pinned cost buffer lives on
-   one. **Keep 16.**
+   job, so the 32-core request was legal, just counterproductive. A follow-up benchmark
+   on the real hardware (job 38458388, `profiling/bench_matcher_threads.py`) **disproved
+   the initial NUMA explanation** — a 48-core allocation landed entirely inside one NUMA
+   domain, and `hpg-b200` has only two — and showed the solve **saturates at ~16 threads**
+   (16: 0.23 s per step's worth of solves; 24: 0.24 s; 32: 1.67 s). There was no headroom
+   to buy. The cliff at ≥32 is real and reproduces in both solvers but is still
+   unexplained. **Keep 16.**
 6. **Exact GPU LAP solver** (e.g. batched Jonker-Volgenant / auction with ε-scaling):
    would delete the DtoH and the CPU stall outright rather than shrinking them. Largest
    remaining structural win; needs a dependency and the same equivalence check.
