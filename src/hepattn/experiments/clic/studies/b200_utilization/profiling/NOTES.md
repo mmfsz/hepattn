@@ -348,6 +348,17 @@ transfer is solved. The two live candidates both target the remaining serialisat
 third now looks more attractive than it did, namely attacking the loss kernels
 themselves, since they are where the GPU actually spends its time.
 
+## DECISION 2026-07-31: both remaining speed options ON HOLD
+
+Per-layer pipelining and the GPU LAP solver are **not being attempted**. −31.2%
+(4.43 → 3.05 s/step, ≈ +45% throughput) with the physics unchanged is being taken
+as sufficient; neither will be revisited until real training runs show step time is
+actually a constraint. Fix 5 (thread count) is closed permanently. The loss kernels
+are now the biggest GPU cost, but the effective attacks on them (bf16, matched pairs
+only) are modelling changes that this study ruled out of scope — no approximations in
+the computations. A deliberate stop, with the analysis for each option recorded above
+so nobody has to re-derive it.
+
 **Study conclusion:** not data-bound; not model-compute-bound. The step is
 dominated by the loss/matcher pipeline: memory-bound loss reductions + pageable
 DtoH cost-matrix transfer + CPU Hungarian stall. This explains the B200≈1.76×L4

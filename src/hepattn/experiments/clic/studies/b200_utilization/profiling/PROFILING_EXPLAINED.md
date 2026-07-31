@@ -317,7 +317,7 @@ is capped by the fraction of work you actually accelerate.)
 
 ---
 
-## 7. What we did about it: four experiments, three keepers
+## 7. What we did about it: five experiments, three keepers
 
 Diagnosis and treatment are separate steps. From the fix candidates we picked
 the ones that are **pure optimizations** — changes that cannot affect the
@@ -503,6 +503,61 @@ the −0.48 s/step is their *joint* effect and we cannot say how it splits. That
 was a deliberate trade (queue time on this cluster is measured in hours), but if
 one of them had turned out to be a regression we would have had to re-run both.
 
+### Fix 5 (REJECTED): give the matcher more CPU threads — **22% slower**
+
+The cheapest idea of all, and the one that needed no code: if 16 threads help,
+try 32. The matching is 10,240 independent problems per step, so it looks like
+work you can simply throw cores at. We asked SLURM for `--cpus-per-task=32`,
+set `n_jobs: 32`, changed nothing else.
+
+Result: **3.72 s/step** against 3.05 s/step at 16 threads (job 38452194) —
+22% *slower* for twice the cores.
+
+This experiment is in here mostly for the mistake that followed it. The first
+explanation written down was that a 32-thread pool must span the node's two
+CPU sockets, paying for memory attached to the far socket. That was wrong, and
+it fell over on a one-line objection: **a socket has 56 cores, so 32 fits
+inside one**, and any placement effect scattered enough to hurt 32 threads
+would hurt 16 as well. A guess that sounds mechanistic is still a guess.
+
+So we measured it instead ([`bench_matcher_threads.py`](bench_matcher_threads.py),
+job 38458388), which prints the cores SLURM actually handed out and then times
+the solve alone at each thread count, on 10,240 cost matrices shaped like the
+real ones:
+
+| threads | lap1015_late | scipy |
+|---|---|---|
+| 1 | 3.32 s | 1.23 s |
+| 8 | 0.41 s | 0.29 s |
+| **16** | **0.23 s** | **0.27 s** |
+| 24 | 0.24 s | 0.26 s |
+| 32 | 1.67 s | 1.91 s |
+| 48 | 1.16 s | 1.41 s |
+
+Two results. First, the placement story is dead: the 48-core allocation came
+back as `Cpus_allowed_list: 60-71,76-111`, entirely inside **one** NUMA domain,
+and an `hpg-b200` node has exactly two (one per socket). Second — and this is
+the finding that actually matters — **the solve saturates at 16 threads.** Going
+to 24 buys nothing (0.24 s vs 0.23 s). The premise of the experiment was simply
+false: there was no unused speed to unlock, so no thread count was ever going to
+help.
+
+There is also a genuine collapse at ≥32 threads, in both solvers, that we
+**cannot currently explain**. We are deliberately not offering a second theory.
+The honest state: 48 threads being *faster* than 32 fits no clean contention
+model, and the benchmark has a known flaw — `_get_thread_pool` caches pools
+forever, so by the time it reaches 32 threads the pools from every earlier count
+are still alive in the same process, measured in ascending order. That has to be
+removed (fresh process per count, randomised order) before the numbers at 32 and
+48 support any conclusion about cause. The leading suspect to test would be GIL
+contention on the per-event *Python* work in `match_individual` — array
+conversion, permutation validation, `np.bincount` — which the C++ GIL release
+does not cover; but that predicts a gradual decline, not a 7× cliff, so it is a
+starting point and not an answer.
+
+None of this changes what to do. **Keep `n_jobs: 16`**, now because 16 is the
+measured saturation point rather than because of any story about hardware.
+
 The general lesson is worth stating plainly, because it is the one most likely
 to save you a day: **a profile tells you where the time went, not why.** The
 trace correctly reported a large memcpy; it had no way to tell us that the same
@@ -510,26 +565,60 @@ gigabyte was then walked twice more by NumPy, since that time appeared only as
 undifferentiated host time next to the solve. Profile to find the region, then
 read the code in that region with the actual data sizes in your head.
 
-### What remains on the table
+### Where the time goes now (post-fix Phase 2, job 38452195)
 
-- **Overlap the matching with GPU work** (~0.85 s/step of GPU idle at baseline):
-  solve the assignment for decoder layer *i* while the GPU computes layer
-  *i+1*'s costs, instead of waiting for all five and then stopping. Real
-  engineering, numerics-preserving in principle, and the most contained of the
-  remaining ideas.
+Before deciding what to do next, we re-ran the Phase-2 trace with all the kept
+fixes in place — same protocol as the original (eager mode, `Compile` off), so
+the two are comparable:
+
+| share of GPU-busy time | pre-fix | post-fix |
+|---|---|---|
+| `Memcpy DtoH` (the cost matrices) | **23.5%** | **0.9%** |
+| fused triton loss kernels | ~53% | **~69%** |
+| model (attention + GEMM) | ~7% | ~8.6% |
+| GPU busy / idle | 70.6% / 29.4% | 54.5% / 45.5% |
+
+The transfer has stopped being a cost centre — 23.5% → 0.9% is the pinned copy
+and the device-side prep confirmed *in the trace*, not merely end-to-end. But
+notice what did **not** happen: the GPU is idle a *larger* fraction of the step
+than before. That is not a regression. We removed GPU work (the copy) and host
+work (the NumPy passes) without removing the **serialisation** between them —
+the GPU still stops dead while the CPU solves. The remaining ideas below all
+attack that, or attack the loss kernels that now dominate what the GPU does.
+
+One caveat, since this trace is easy to over-read: it runs with `torch.compile`
+off so that operations stay attributable, which inflates host time (the Lion
+optimizer alone shows ~0.44 s/step of pure dispatch overhead). **45.5% is not the
+production idle fraction.** Only the composition transfers.
+
+### What remains on the table — and the current decision
+
+**Decision (2026-07-31): both speed options below are on hold.** The study
+delivered −31.2% (4.43 → 3.05 s/step, ≈ +45% throughput) with no change to the
+physics, and that is being taken as sufficient for now. Nothing further will be
+attempted until real training runs show whether the current speed is actually a
+constraint. This is a deliberate stop, not an oversight — the analysis below is
+recorded so that whoever picks it up does not have to re-derive it.
+
+- **Overlap the matching with GPU work** (the serialisation above): solve the
+  assignment for decoder layer *i* while the GPU computes layer *i+1*'s costs,
+  instead of waiting for all five and then stopping. The more contained of the
+  two, since the per-layer loop already exists in
+  `maskformer.py:_compute_decoder_costs`.
 - **An exact assignment solver that runs on the GPU** (batched
   Jonker-Volgenant, or auction with ε-scaling). This would delete the
   device-to-host copy and the host stall outright rather than making them
   cheaper — the largest structural win left. Needs a new dependency and the
   same equivalence checking as everything else here.
-- **Shrink the loss kernels** (~1.05 s/step): computing mask losses in bf16, or
-  only on matched pairs, is a *modelling* change and needs accuracy validation —
-  unlike everything we actually kept. There is also an exact algebraic rewrite
-  of the mask-cost einsums that halves one GEMM; mathematically exact but not
-  bit-identical, so it still wants a loss-curve check.
-- **More matcher threads** (`--cpus-per-task=32`): legal on this cluster but
-  untested, and already above the 14-cores-per-GPU fair share of an `hpg-b200`
-  node.
+- **Shrink the loss kernels** — now ~69% of all GPU work, so this has become the
+  biggest single line item, which it was not when the study started. Computing
+  mask losses in bf16, or only on matched pairs, is a *modelling* change needing
+  accuracy validation and is **explicitly out of scope** for this study: no
+  approximations in the computations. The exact alternative is the algebraic
+  rewrite of the mask-cost einsums, which halves one GEMM; mathematically exact
+  but not bit-identical, so it still wants a loss-curve check.
+- **More matcher threads**: settled and closed — see Fix 5. The solve saturates
+  at 16 threads; there is nothing there.
 
 The strategic takeaway stands, now with both a mechanism and a partial remedy:
 **for this workload, a B200 is poor value.** The fixes above removed ~1.4 s/step
@@ -537,9 +626,8 @@ of overhead that never scaled with GPU FLOPS in the first place — but they did
 not add any work that does. Model compute measured ~0.13 s of the profiled
 baseline step, and since none of these changes touch the model (the flat
 `backward` control says as much), it is the same ~0.13 s now — simply a slightly
-larger slice of a smaller step. We did not re-run Phase 2 to re-measure the
-split, so treat the post-fix breakdown as inference rather than measurement.
-The B200 only pays off if the model gets much bigger, or if the
+larger slice of a smaller step, which the post-fix trace confirms (model compute
+~7% → ~8.6% of GPU-busy time). The B200 only pays off if the model gets much bigger, or if the
 loss/matcher pipeline is reworked further so that model compute becomes the
 dominant cost.
 

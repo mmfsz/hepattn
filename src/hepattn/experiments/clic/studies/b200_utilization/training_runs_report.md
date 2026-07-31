@@ -179,9 +179,10 @@ wall-clock. The fixes below shrink the GPU-independent part; they do not change 
    final shape, and carrying no target rows the solver will not read. Assignments
    unchanged (556-event equivalence check across -inf/NaN/constant/empty/query-masked
    matrices, both solvers vs scipy optimal cost in float64).
-4. **Overlap matching with GPU work** (~0.85 s/step GPU-idle): not attempted — invasive
-   in general, but per-decoder-layer pipelining (async DtoH + solve layer *i* while the
-   GPU computes layer *i+1*'s costs) is a contained version worth trying next.
+4. **Overlap matching with GPU work** (the GPU/CPU serialisation, still the largest
+   source of idle): **ON HOLD** — not attempted. Per-decoder-layer pipelining (async DtoH
+   + solve layer *i* while the GPU computes layer *i+1*'s costs) is the contained version,
+   and the per-layer loop already exists in `maskformer.py:_compute_decoder_costs`.
 5. **More matcher threads — MEASURED, REJECTED: 22% *slower*** (job 38452194:
    3.72 s/step at `n_jobs: 32` + `--cpus-per-task=32`, vs 3.05 s/step at 16).
    `hpg-b200` nodes are 112 physical cores / 8 GPUs = 14 per GPU, so `--cpus-per-task=16`
@@ -194,13 +195,28 @@ wall-clock. The fixes below shrink the GPU-independent part; they do not change 
    to buy. The cliff at ≥32 is real and reproduces in both solvers but is still
    unexplained. **Keep 16.**
 6. **Exact GPU LAP solver** (e.g. batched Jonker-Volgenant / auction with ε-scaling):
-   would delete the DtoH and the CPU stall outright rather than shrinking them. Largest
-   remaining structural win; needs a dependency and the same equivalence check.
-7. **Loss-kernel cost** (~1.05 s/step): not attempted — computing mask losses in bf16 /
+   **ON HOLD** — would delete the DtoH and the CPU stall outright rather than shrinking
+   them. Largest remaining structural win; needs a dependency and the same equivalence
+   check.
+7. **Loss-kernel cost** (now ~69% of GPU-busy time, i.e. the biggest single item, which it
+   was not at the start of the study): not attempted — computing mask losses in bf16 /
    only on matched pairs is a modelling change needing accuracy validation. An exact
    alternative is the algebraic rewrite of the mask-cost einsums
    (`einsum(pos, t) + einsum(neg, 1-t)` → `einsum(pos-neg, t) + neg.sum(-1)`), halving
    one GEMM; mathematically exact but not bit-identical, so it needs a loss-curve check.
+
+### Status: closed for now (2026-07-31)
+
+**Decision: candidates 4 and 6 — the two remaining speed options — are on hold.** The
+study delivered −31.2% (4.43 → 3.05 s/step, ≈ +45% throughput) with the physics
+unchanged, and that is being treated as sufficient. Neither the matching/GPU overlap nor
+a GPU-side assignment solver will be attempted until real training runs show that step
+time is actually a constraint. Candidate 5 (more threads) is closed permanently — the
+solve saturates at 16. Candidate 7 (loss kernels) is now the largest GPU cost, but the
+effective versions of it are modelling changes, which this study ruled out of scope.
+
+This is a deliberate stopping point rather than an unfinished thread: the analysis for
+each remaining option is recorded above so it does not need re-deriving.
 
 ### Cumulative progression (200 steps, 1× B200, batch 2048, 16 CPU)
 
