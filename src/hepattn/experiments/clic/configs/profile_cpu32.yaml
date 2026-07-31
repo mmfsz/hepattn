@@ -1,0 +1,11 @@
+# Throwaway overlay: give the matcher's thread pool 32 workers instead of 16.
+# Layer as: --config configs/base.yaml --config configs/profile.yaml --config configs/profile_cpu32.yaml
+# Must be paired with `#SBATCH --cpus-per-task=32` or the extra threads have no cores to
+# run on. Single-variable change vs. job 38451000 — everything else identical.
+# See studies/b200_utilization/profiling/NOTES.md.
+model:
+  model:
+    init_args:
+      matcher:
+        init_args:
+          n_jobs: 32

@@ -215,7 +215,9 @@ result — single variable).
 1. **On-device cost prep.** Phase 2 only counted the DtoH bytes; re-reading
    `compute_matching` showed the host also paid *two* full-size numpy copies of
    the ~1 GB stacked cost tensor every step (batch 2048 × 150 queries × 150
-   targets × 4 decoder layers, fp32):
+   targets × 5 matched decoder outputs, fp32 — the 4 decoder layers plus the final
+   head, all stacked into one matcher call; 921.6 MB exactly, which is what the
+   Phase-2 trace's DtoH copy reports):
    `np.ascontiguousarray(costs.swapaxes(1, 2))` (a strided single-threaded
    transpose into solver layout) and the `np.where` masking padded queries. Both
    moved into a new `Matcher._prepare_costs`, which sanitises, masks, transposes
@@ -255,6 +257,61 @@ fair share, so the current `--cpus-per-task=16` already exceeds it. The `avery`
 QoS limits the *account* (`cpu=430, gres/gpu=34`), not the job, so a 1-GPU run at
 `--cpus-per-task=32` + `n_jobs: 32` is legal — untested, and it would queue
 slower and consume shared budget.
+
+## Fix experiment 5 — 32 matcher threads (job 38452194, 2026-07-31)
+
+Tests whether the solve is still thread-starved at 16. `configs/profile_cpu32.yaml`
+(`n_jobs: 32`) + `--cpus-per-task=32` in `submit_profile_cpu32_1gpu.sh`; single
+variable vs job 38451000.
+
+**VERDICT: NEGATIVE — 32 threads are 22% SLOWER than 16.**
+
+| 200 steps, 1× B200, batch 2048 | 16 CPU (38451000) | 32 CPU (38452194) | Δ |
+|---|---|---|---|
+| `run_training_batch` | **3.05 s/step** | 3.72 s/step | +0.67 s (+21.9%) |
+| `training_step` | **2.387 s/step** | 3.051 s/step | +0.66 s |
+| `backward` (control) | 0.628 s/step | 0.632 s/step | identical |
+
+Not investigated further, but the likely cause is NUMA: `hpg-b200` nodes are two
+56-core sockets, so a 32-thread pool necessarily spans both, while the cost data
+sits in one pinned buffer allocated on a single socket — every thread on the far
+socket pays cross-socket memory latency on a memory-bound workload. Oversubscription
+against the 16 dataloader workers may contribute. **Keep `n_jobs: 16` and
+`--cpus-per-task=16`.** If anyone retries this, pin the pool with `numactl`
+or use one pool per socket rather than simply raising the count.
+
+## Phase 2 re-run — post-fix trace (job 38452195, 2026-07-31)
+
+Same protocol as the original Phase 2 (eager mode, `Compile` callback off, 12 steps,
+`configs/profile_phase2.yaml`) but with all four fixes in place, to re-aim before
+attempting the remaining candidates. Artifacts: `profile_logs/phase2_postfix_*`
+(the pre-fix ones are preserved as `phase2_prefix_*`).
+
+| share of GPU-busy time | pre-fix (38127863) | post-fix (38452195) |
+|---|---|---|
+| `Memcpy DtoH` (cost matrices) | **23.5%** | **0.9%** |
+| fused triton loss kernels | ~53% | **~69%** |
+| model (attention + GEMM) | ~7% | ~8.6% |
+| GPU busy / idle | 70.6% / 29.4% | 54.5% / 45.5% |
+
+The DtoH copy is gone as a cost centre — 23.5% → 0.9% confirms fix 2 + fix 4 at the
+trace level, not just end-to-end. What remains is a two-part problem, and the
+proportions have flipped: **the loss kernels are now ~69% of everything the GPU
+does**, and the GPU is idle a *larger* fraction of the step than before, because we
+removed GPU work (the copy) and host work without removing the serialisation between
+them.
+
+Caveats on the idle number: this is eager mode with profiler overhead, so 45.5% is
+not the production idle fraction and is not comparable to the 3.05 s/step figure —
+only the *composition* transfers. The script also reports 6 `ProfilerStep` spans for
+3 real steps (duplicate thread-level spans), so per-step rows in its output are not
+independent measurements.
+
+Implication for what to try next: raising thread count is dead (fix 5), and the
+transfer is solved. The two live candidates both target the remaining serialisation
+— per-decoder-layer pipelining of DtoH+solve, or an exact GPU LAP solver — and a
+third now looks more attractive than it did, namely attacking the loss kernels
+themselves, since they are where the GPU actually spends its time.
 
 **Study conclusion:** not data-bound; not model-compute-bound. The step is
 dominated by the loss/matcher pipeline: memory-bound loss reductions + pageable

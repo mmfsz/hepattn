@@ -53,28 +53,33 @@ the horsepower and getting ~1.8× the speed means **the GPU's math was not the b
 the B200 spent most of its time waiting, not computing. 
 
 This underutilization is expected for **this** workload: the model is tiny (10.1 M parameters),
-which doesn't come close to filling a B200's compute, and the training step does real CPU-side
-data loading/preprocessing each iteration. Adding more GPUs also adds more parallel data
-pipelines (each DDP task runs its own 16 workers), so more-but-weaker GPUs win here.
+which doesn't come close to filling a B200's compute, and each step does substantial host-side
+work outside the model. Adding more GPUs also adds more parallel data pipelines (each DDP task
+runs its own 16 workers), so more-but-weaker GPUs win here.
 
-### What is proven vs. still a hypothesis
+### What is proven vs. what was still a hypothesis
 - **Proven** (from the measured throughput): the B200 is heavily underutilized on this
   workload — something other than its raw compute is the ceiling.
-- **Not yet proven**: the *exact* bottleneck. The leading suspect is the data pipeline
-  (CPU/disk feeding the GPU), but it could instead be launch overhead from many tiny
-  operations on a small model, host-side Python overhead, or memory bandwidth. The runs here
-  had the profiler disabled (`profiler: null`) and logged no GPU-utilization data, so the
-  mechanism can't be confirmed from existing logs.
-- **How to confirm**: re-run a short 1-GPU job with `profiler: simple` (Lightning then reports
-  time spent in `train_dataloader_next`, i.e. waiting for data) plus a synthetic-data control
-  (in-memory random tensors, no I/O) and a `num_workers` sweep. If throughput jumps with
-  synthetic data / more workers, it's data-pipeline-bound.
+- **Was not proven when this section was written**: the *exact* bottleneck. The leading
+  suspect was the data pipeline (CPU/disk feeding the GPU); the alternatives listed were
+  launch overhead from many tiny operations on a small model, host-side Python overhead, or
+  memory bandwidth. These runs had the profiler disabled (`profiler: null`) and logged no
+  GPU-utilization data, so the mechanism could not be confirmed from their logs.
+- **Now resolved** by the profiling study below (jobs 38122563 / 38127863, 2026-07-27):
+  the leading suspect was **wrong** — the run is not data-bound (`train_dataloader_next` =
+  0.42% of wall time). The bottleneck is the **loss/matcher pipeline**: memory-bound loss
+  reductions, a ~0.9 GB device→host copy of the cost matrices, and the CPU Hungarian solve.
+  See the **"Profiling results"** section below for the numbers and for the four fix
+  experiments that followed.
 
 ### Practical takeaway
-For this small model + I/O-heavy pipeline, the B200 is poor value — you pay for compute you
-can't feed. Several cheap L4s beat it on both wall-clock time and cost. A B200 would only pay
-off if the model were scaled up, the per-GPU batch increased, or the data pipeline made cheap
-enough that the GPU itself becomes the limiting factor.
+For this small model, the B200 is poor value as configured — you pay for compute you can't
+feed. Several cheap L4s beat it on both wall-clock time and cost. A B200 would only pay off if
+the model were scaled up, the per-GPU batch increased, or the loss/matcher pipeline made cheap
+enough that the GPU itself becomes the limiting factor. **Update (2026-07-31):** the fix
+experiments below recovered ~45% throughput (4.43 → 3.05 s/step) by attacking exactly that
+pipeline, without touching the model or the numerics — but model compute is still only ~5% of
+the step, so the conclusion about B200 value stands.
 
 ## Issues Encountered and Fixes
 
@@ -98,11 +103,14 @@ if q_flat.dtype == torch.float32:
 ### 4. OOM crash on 4× B200
 The 4-GPU job OOM-killed ranks 1–3 at epoch 0 step 50/122. Root cause: SLURM's `--mem` is per-node total CPU RAM. With 4 DDP ranks each spawning 16 DataLoader workers (64 workers total), the CPU RAM requirement is ~4× the single-GPU case (~240 GB), but only 200 GB was requested. Fixed by increasing `--mem` to 300 GB in `submit_training_hpg.sh`.
 
-## Profiling results (2026-07-27, jobs 38122563 & 38127863)
+## Profiling results (2026-07-27 → 2026-07-31)
 
-Executed per [`profiling/README.md`](profiling/README.md); raw tables/traces in
-[`profiling/profile_logs/`](profiling/profile_logs/), running notes in
-[`profiling/NOTES.md`](profiling/NOTES.md).
+Diagnosis: jobs 38122563 (Phase 1) & 38127863 (Phase 2), plus a post-fix Phase-2 re-run
+(job 38452195). Fix experiments: jobs 38206804, 38209457, 38212448, 38451000, 38452194.
+Executed per [`profiling/README.md`](profiling/README.md);
+raw tables/traces in [`profiling/profile_logs/`](profiling/profile_logs/), running notes in
+[`profiling/NOTES.md`](profiling/NOTES.md), and a from-scratch explanation of the concepts in
+[`profiling/PROFILING_EXPLAINED.md`](profiling/PROFILING_EXPLAINED.md).
 
 ### Confirmed bottleneck: loss/matcher pipeline, NOT the data pipeline and NOT the model
 
@@ -121,25 +129,31 @@ steps @ ~2.85 s): inside the step, per Chrome-trace analysis:
 - Of the GPU-busy time, the **model is almost nothing**: attention kernels 4.1% + GEMMs
   2.5% ≈ **7%**. The rest is loss/matcher machinery:
   - **~53% fused triton loss kernels** — the dense mask BCE/dice cost/loss matrices
-    (`batch × queries × constituents`, fp32) for 5 decoder layers. These are memory-bound
-    reductions, so extra B200 FLOPS barely help. (These come from `torch.compile`d loss
-    fns and are present even with the `Compile` callback disabled.)
-  - **23.5% `Memcpy DtoH (Device → Pageable)`** — 2 copies × ~236 ms per step shipping the
-    cost matrices to the CPU for the Hungarian matcher, into *pageable* (non-pinned)
-    memory, at `matcher.py` `.cpu().numpy()`.
+    (`batch × queries × constituents`, fp32) for all 5 matched decoder outputs
+    (`num_decoder_layers: 4` plus the final head; `maskformer.py:_compute_decoder_costs`).
+    These are memory-bound reductions, so extra B200 FLOPS barely help. (These come from
+    `torch.compile`d loss fns and are present even with the `Compile` callback disabled.)
+  - **23.5% `Memcpy DtoH (Device → Pageable)`** — shipping the cost matrices to the CPU for
+    the Hungarian matcher, into *pageable* (non-pinned) memory, at the matcher's host copy.
+    Per step this is **one 921.6 MB copy taking ~472 ms** (5 stacked cost matrices ×
+    2048 events × 150 queries × 150 targets × 4 B, i.e. ~1.95 GB/s effective) plus an 80 KB
+    copy of the per-event target counts; the profiler's "235.9 ms mean over 6 calls" is the
+    average over both sizes across the 3 profiled steps, not two equal 236 ms copies.
 
 ### Why 1 B200 ≈ 1.76× 1 L4 (mechanism)
-Per ~2.85 s step, only ~0.13 s is model compute that scales with GPU FLOPS. The remaining
-~95% (memory-bound loss reductions + DtoH transfer + CPU Hungarian solve + Python overhead)
-is roughly GPU-independent, so a 15–40× FLOPS advantage collapses to ~1.8× wall-clock.
+Per ~2.85 s baseline step, only ~0.13 s is model compute that scales with GPU FLOPS. The
+remaining ~95% (memory-bound loss reductions + DtoH transfer + CPU Hungarian solve + Python
+overhead) is roughly GPU-independent, so a 15–40× FLOPS advantage collapses to ~1.8×
+wall-clock. The fixes below shrink the GPU-independent part; they do not change the ~0.13 s.
 
-### Fix candidates and outcomes (updated 2026-07-28; details in [`profiling/NOTES.md`](profiling/NOTES.md))
+### Fix candidates and outcomes (updated 2026-07-31; details in [`profiling/NOTES.md`](profiling/NOTES.md))
 1. **Pinned-memory DtoH transfer — APPLIED, KEPT: −11.6% step time** (job 38209457 vs
    38122563: `run_training_batch` 4.43 → 3.92 s/step; `training_step` 3.76 → 3.25 s/step;
-   `backward` unchanged as control). `Matcher.forward` now stages the cost-matrix copy
-   through a cached pinned buffer (`models/matcher.py`) — bit-identical numerics, applies
-   to all experiments. **From job 38209457 onward, all runs include this change.**
-2. **Faster assignment solver (`lap1015_late`) — MEASURED, REJECTED:** 1.9× *slower*
+   `backward` unchanged as control). The cost-matrix copy is staged through a cached pinned
+   buffer (`models/matcher.py`, now in `Matcher._prepare_costs`) — bit-identical numerics,
+   applies to all experiments. **From job 38209457 onward, all runs include this change.**
+2. **Faster assignment solver (`lap1015_late`) — REJECTED as shipped, then FIXED and
+   PROMOTED.** As shipped it was 1.9× *slower*
    end-to-end (job 38206804: 7.14 s/step). The lap1015 algorithm is 3.5× faster than
    scipy single-threaded, but its pybind11 binding never releases the GIL, so the
    16-thread matcher parallelism serializes; scipy releases the GIL and scales ~11×.
@@ -157,7 +171,7 @@ is roughly GPU-independent, so a 15–40× FLOPS advantage collapses to ~1.8× w
    being ~2× slower than scipy.
 3. **Device-side cost preparation — APPLIED, KEPT: a further −13.7%** (job 38451000 vs
    38212448: `run_training_batch` 3.53 → **3.05 s/step**). The host used to pay two
-   full-size numpy copies of the ~1 GB stacked cost tensor per step — the
+   full-size numpy copies of the 921.6 MB stacked cost tensor per step — the
    `np.ascontiguousarray(costs.swapaxes(1, 2))` transpose into solver layout, and the
    `np.where` that masks padded queries — and the DtoH copy landed in the wrong layout.
    `Matcher._prepare_costs` now sanitises, masks, transposes and crops to
@@ -168,10 +182,13 @@ is roughly GPU-independent, so a 15–40× FLOPS advantage collapses to ~1.8× w
 4. **Overlap matching with GPU work** (~0.85 s/step GPU-idle): not attempted — invasive
    in general, but per-decoder-layer pipelining (async DtoH + solve layer *i* while the
    GPU computes layer *i+1*'s costs) is a contained version worth trying next.
-5. **More matcher threads**: `hpg-b200` nodes are 112 physical cores / 8 GPUs = 14 per
-   GPU, so the current `--cpus-per-task=16` + `n_jobs: 16` is already above fair share.
-   The `avery` QoS caps the account (`cpu=430`), not the job, so a 1-GPU run at 32 cores
-   is legal and untested.
+5. **More matcher threads — MEASURED, REJECTED: 22% *slower*** (job 38452194:
+   3.72 s/step at `n_jobs: 32` + `--cpus-per-task=32`, vs 3.05 s/step at 16).
+   `hpg-b200` nodes are 112 physical cores / 8 GPUs = 14 per GPU, so `--cpus-per-task=16`
+   was already above fair share; the `avery` QoS caps the account (`cpu=430`), not the
+   job, so the 32-core request was legal, just counterproductive. Likely NUMA — the two
+   56-core sockets mean a 32-thread pool spans both while the pinned cost buffer lives on
+   one. **Keep 16.**
 6. **Exact GPU LAP solver** (e.g. batched Jonker-Volgenant / auction with ε-scaling):
    would delete the DtoH and the CPU stall outright rather than shrinking them. Largest
    remaining structural win; needs a dependency and the same equivalence check.
@@ -193,6 +210,35 @@ is roughly GPU-independent, so a 15–40× FLOPS advantage collapses to ~1.8× w
 ≈ +45% throughput end-to-end, `backward` flat across all four runs as a control. Steady
 state after compile warmup is ~2.29 s/step (steps 50→200), vs ~3.7 s/step at baseline.
 
+**Every accepted change is assignment-identical** — no accuracy was traded for speed. The
+pinned-buffer and device-prep changes only alter how and where the cost matrices are moved
+and laid out; the promoted solver was checked against scipy's optimal assignment cost in
+float64 over 556 events spanning `-inf`, NaN, all-constant, empty and query-masked cost
+matrices, plus `tests/matching` (118 passed).
+
+### Post-fix Phase-2 re-run (job 38452195, 2026-07-31): where the time goes now
+
+Same protocol as the original Phase 2 (eager mode, `Compile` off, 12 steps), re-run with
+all four fixes in place to re-aim before attempting anything further.
+
+| share of GPU-busy time | pre-fix (38127863) | post-fix (38452195) |
+|---|---|---|
+| `Memcpy DtoH` (cost matrices) | **23.5%** | **0.9%** |
+| fused triton loss kernels | ~53% | **~69%** |
+| model (attention + GEMM) | ~7% | ~8.6% |
+| GPU busy / idle | 70.6% / 29.4% | 54.5% / 45.5% |
+
+The transfer is no longer a cost centre — 23.5% → 0.9% confirms the pinned-copy and
+device-prep fixes at the trace level, not just end-to-end. The proportions have flipped:
+the loss kernels are now ~69% of all GPU work, and the GPU is idle a *larger* fraction of
+the step than before, because we removed GPU work and host work without removing the
+serialisation between them. Note this is eager mode with profiler overhead, so 45.5% is
+not the production idle fraction; only the composition transfers. Details and caveats in
+[`profiling/NOTES.md`](profiling/NOTES.md).
+
 Phase 3 (nsys / custom torch.profiler callback) was not needed — Phase 2 answered the
-question. The baseline configs (`base.yaml`, `clic_v7.yaml`) are untouched; profiling
-overlays live in `configs/profile.yaml` / `configs/profile_phase2.yaml`.
+question. Profiling overlays live in `configs/profile.yaml` / `configs/profile_phase2.yaml`
+and leave the run configs alone; the one deliberate change to a baseline config is
+`base.yaml: default_solver: scipy → lap1015_late` (fix 2's follow-up, promoted 2026-07-31 on
+branch `matcher-perf`, and only valid with the rebuilt `lap1015` extension). `clic_v7.yaml`
+is untouched.

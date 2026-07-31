@@ -1,15 +1,22 @@
 # CLIC Training Profiling Study
 
-**Status:** DONE (2026-07-27). Phase 1 (job 38122563): **not data-bound**
-(`train_dataloader_next` = 0.42%); Phase 1b skipped per decision rule. Phase 2
-(job 38127863): GPU 70% busy / 30% idle; busy time is ~53% triton loss kernels +
+**Status:** DONE (diagnosis 2026-07-27, fixes through 2026-07-31). Phase 1 (job 38122563):
+**not data-bound** (`train_dataloader_next` = 0.42%); Phase 1b skipped per decision rule.
+Phase 2 (job 38127863): GPU 70% busy / 30% idle; busy time is ~53% triton loss kernels +
 23.5% pageable DtoH cost-matrix copy for the matcher; **only ~7% actual model
 compute**. Bottleneck = loss/matcher pipeline. Phase 3 not needed. See
 [NOTES.md](NOTES.md) and the "Profiling results" section of
-[`../training_runs_report.md`](../training_runs_report.md). Fix experiments (2026-07-28):
-pinned-memory DtoH transfer **kept, −11.6% step time**; lap1015 solver **rejected**
-(GIL-bound binding, 1.9× slower). Baseline configs untouched; the kept fix lives in
-`models/matcher.py`. A beginner-friendly walkthrough of the whole study is in
+[`../training_runs_report.md`](../training_runs_report.md).
+
+**Fix experiments — cumulative −31.2% step time (4.43 → 3.05 s/step, ≈ +45% throughput),
+all assignment-identical:** pinned-memory DtoH staging **kept** (−11.6%, job 38209457);
+`lap1015_late` **rejected as shipped** (GIL-bound binding, 1.9× slower, job 38206804) but
+**promoted after a one-line `py::gil_scoped_release`** in `src/lap1015/src/main.cpp`
+(−20.3% cumulative, job 38212448); device-side cost preparation **kept** (−31.2% cumulative,
+job 38451000). The kept code changes live in `models/matcher.py` (`Matcher._prepare_costs`)
+and `src/lap1015/src/main.cpp`; the one config change is `base.yaml:
+default_solver: lap1015_late`, which **requires the rebuilt lap1015 extension** (see the
+gotcha below). A beginner-friendly walkthrough of the whole study is in
 [PROFILING_EXPLAINED.md](PROFILING_EXPLAINED.md).
 
 **Goal:** Find out *why the B200 GPU is underutilized* during CLIC training, so we
@@ -33,11 +40,13 @@ comparison. Key facts:
 - **Proven:** the B200 is heavily underutilized on this workload — raw compute is
   *not* the ceiling. The model is tiny (10.1 M params) and each step does real
   CPU-side data loading/preprocessing.
-- **Not yet proven:** the *exact* bottleneck. Leading suspect is the data pipeline
-  (CPU/disk feeding the GPU), but it could be host-side Python overhead, the CPU
-  scipy Hungarian matcher, or launch overhead from many tiny ops on a small model.
-- The existing runs had `profiler: null` and logged no GPU-util data, so the
-  mechanism cannot be confirmed from existing logs. **This study confirms it.**
+- **Not proven *before* this study:** the *exact* bottleneck. Leading suspect was the data
+  pipeline (CPU/disk feeding the GPU), with host-side Python overhead, the CPU Hungarian
+  matcher, or launch overhead from many tiny ops as alternatives.
+- The pre-study runs had `profiler: null` and logged no GPU-util data, so the
+  mechanism could not be confirmed from their logs. **This study confirmed it: the data
+  pipeline was innocent (0.42%); the loss/matcher pipeline is the bottleneck.** The plan
+  below is kept as written so the method can be re-run or reused for another experiment.
 
 ---
 
@@ -69,11 +78,15 @@ comparison. Key facts:
   callbacks list) `torch.compile`s the encoder+decoder on train start. For Phase 2
   (PyTorchProfiler) either remove `hepattn.callbacks.Compile` from the callbacks list
   in the profiling config, or profile only *after* warmup steps.
-- **CPU scipy Hungarian matcher** runs every step inside `model.loss`
-  (`matcher.default_solver: scipy` in `base.yaml`). On a fast B200 this is a prime
-  GPU-idle stall — watch for it specifically in Phase 2/3 traces. Note it is
+- **CPU Hungarian matcher** runs every step inside `model.loss`. On a fast B200 this is a
+  prime GPU-idle stall — watch for it specifically in Phase 2/3 traces. Note it is
   parallelized across the batch (`parallel_solver: true`, `n_jobs: 16`), so expect a
-  16-way CPU fan-out in traces, not a single-thread scipy call.
+  16-way CPU fan-out in traces, not a single-thread solver call. **The traces in this
+  study were taken with `matcher.default_solver: scipy`, which was the `base.yaml` default
+  at the time; since 2026-07-31 the default is `lap1015_late`** (fix experiment 3). That
+  only pays off with a `lap1015` extension built with `py::gil_scoped_release` — if the env
+  is reinstalled without the rebuilt `_core`, the GIL-bound binding makes the matcher ~2×
+  slower than scipy, so re-check `run_training_batch` after any env rebuild.
 - **Do not set `trainer.logger: false`** in the profiling config: `utils/cli.py`
   `link_arguments("name", "trainer.logger.init_args.name")` assumes a logger object
   exists. Leave the (offline) Comet logger as-is; its overhead is negligible.
