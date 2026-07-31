@@ -65,16 +65,20 @@ py::array_t<int> linear_sum_assignment(py::array_t<float> cost_matrix, bool omp 
     // create the output array
     int *rowsol = new int[Ny];
 
-    // solve
-    if (omp) {
+    // solve with the GIL released: the solver only touches raw C++ buffers, and
+    // holding the GIL here serializes thread-parallel batch matching in callers
+    {
+        py::gil_scoped_release release;
+        if (omp) {
 #ifdef LAP_OPENMP
-        solveTableOMP<float, float>(start_time, Nx, Ny, get_cost, rowsol, eps);
+            solveTableOMP<float, float>(start_time, Nx, Ny, get_cost, rowsol, eps);
 #else
-        throw std::runtime_error("OpenMP not enabled");
+            throw std::runtime_error("OpenMP not enabled");
 #endif
-    }
-    else {
-        solveTable<float, float>(start_time, Nx, Ny, get_cost, rowsol, eps);
+        }
+        else {
+            solveTable<float, float>(start_time, Nx, Ny, get_cost, rowsol, eps);
+        }
     }
     // convert the output to a numpy array
     py::array_t<int, py::array::c_style> result(Ny);
