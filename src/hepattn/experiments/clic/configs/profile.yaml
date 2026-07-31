@@ -1,0 +1,6 @@
+# Throwaway profiling overlay — layer on top of base.yaml via a second --config.
+# See studies/b200_utilization/profiling/README.md. Do NOT use for real training runs.
+trainer:
+  profiler: simple
+  max_steps: 200
+  limit_val_batches: 0

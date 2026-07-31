@@ -1,0 +1,108 @@
+FIT Profiler Report
+Profile stats for: records
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+[pl][profile][Strategy]SingleDeviceStrategy.training...         0.00%       0.000us         0.00%       0.000us       0.000us        5.876s        97.54%        5.876s        1.959s             3  
+[pl][profile][Strategy]SingleDeviceStrategy.training...         0.17%      27.977ms        40.29%        6.477s        2.159s       0.000us         0.00%        4.154s        1.385s             3  
+                        [pl][profile]run_training_batch         0.01%       2.149ms        48.67%        7.825s        2.608s       0.000us         0.00%        2.760s     920.112ms             3  
+    [pl][profile][LightningModule]MPflow.optimizer_step         0.00%      92.421us        48.66%        7.823s        2.608s       0.000us         0.00%        2.760s     920.112ms             3  
+                               Optimizer.step#Lion.step         8.37%        1.346s        48.66%        7.823s        2.608s       0.000us         0.00%        2.760s     920.112ms             3  
+                                       CompiledFunction         0.02%       2.837ms         0.08%      12.942ms     269.629us       0.000us         0.00%        2.092s      43.578ms            48  
+                                          ProfilerStep*         0.00%       0.000us         0.00%       0.000us       0.000us        2.043s        33.91%        2.043s     680.990ms             3  
+                                            aten::copy_         0.12%      19.610ms         9.70%        1.560s     347.723us        1.689s        28.04%        1.689s     376.645us          4485  
+                                               aten::to         0.02%       3.118ms         9.70%        1.560s     353.934us       0.000us         0.00%        1.604s     363.977us          4407  
+                                         aten::_to_copy         0.05%       7.364ms         9.68%        1.557s     541.639us       0.000us         0.00%        1.604s     558.123us          2874  
+                                          ProfilerStep*        27.08%        4.353s        53.07%        8.532s        2.844s       0.000us         0.00%        1.424s     474.695ms             3  
+[pl][module]hepattn.models.matcher.Matcher: model.ma...         0.00%       0.000us         0.00%       0.000us       0.000us        1.419s        23.55%        1.419s     472.958ms             3  
+[pl][module]hepattn.models.matcher.Matcher: model.ma...        13.68%        2.199s        23.19%        3.728s        1.243s       0.000us         0.00%        1.415s     471.722ms             3  
+                       Memcpy DtoH (Device -> Pageable)         0.00%       0.000us         0.00%       0.000us       0.000us        1.415s        23.49%        1.415s     235.855ms             6  
+                             Torch-Compiled Region: 3/0         0.00%     674.644us         3.93%     631.158ms      42.077ms       0.000us         0.00%        1.318s      87.849ms            15  
+                             Torch-Compiled Region: 4/0         0.00%     660.647us         0.07%      11.659ms     777.284us       0.000us         0.00%        1.316s      87.730ms            15  
+                             Torch-Compiled Region: 5/0         0.00%     554.577us         0.06%       9.069ms     604.568us       0.000us         0.00%        1.314s      87.612ms            15  
+## Call CompiledFxGraph fsvrcehpnydldwv2r5gb3jzxxjuk...         0.00%       0.000us         0.00%       0.000us       0.000us        1.313s        21.79%        1.313s      87.528ms            15  
+                             Torch-Compiled Region: 6/0         0.00%     560.932us         0.04%       6.433ms     428.859us       0.000us         0.00%        1.312s      87.494ms            15  
+## Call CompiledFxGraph fsvrcehpnydldwv2r5gb3jzxxjuk...         0.02%       3.537ms         0.03%       4.622ms     308.135us       0.000us         0.00%        1.312s      87.494ms            15  
+triton_red_fused__to_copy_binary_cross_entropy_with_...         0.00%     235.051us         0.00%     324.497us      21.633us        1.301s        21.59%        1.301s      86.714ms            15  
+triton_red_fused__to_copy_binary_cross_entropy_with_...         0.00%       0.000us         0.00%       0.000us       0.000us        1.301s        21.59%        1.301s      86.714ms            15  
+autograd::engine::evaluate_function: CompiledFunctio...         0.00%     306.346us         0.05%       8.345ms     173.853us       0.000us         0.00%        1.087s      22.640ms            48  
+                               CompiledFunctionBackward         0.02%       3.365ms         0.05%       8.039ms     167.470us       0.000us         0.00%        1.087s      22.640ms            48  
+                             Torch-Compiled Region: 7/0         0.00%     682.324us         8.19%        1.317s      87.810ms       0.000us         0.00%     780.418ms      52.028ms            15  
+                             Torch-Compiled Region: 8/0         0.00%     650.849us         0.04%       7.004ms     466.960us       0.000us         0.00%     778.654ms      51.910ms            15  
+## Call CompiledFxGraph fapiyvrnnoab4cxcgw4nu7g3xp7m...         0.00%       0.000us         0.00%       0.000us       0.000us     776.894ms        12.90%     776.894ms      51.793ms            15  
+                             Torch-Compiled Region: 9/0         0.00%     533.258us         0.03%       4.367ms     291.124us       0.000us         0.00%     776.881ms      51.792ms            15  
+## Call CompiledFxGraph fapiyvrnnoab4cxcgw4nu7g3xp7m...         0.01%       1.695ms         0.02%       2.726ms     181.716us       0.000us         0.00%     776.881ms      51.792ms            15  
+triton_red_fused_add_div_mul_sigmoid_sum_unsqueeze_1...         0.00%     227.521us         0.00%     318.146us      21.210us     769.242ms        12.77%     769.242ms      51.283ms            15  
+triton_red_fused_add_div_mul_sigmoid_sum_unsqueeze_1...         0.00%       0.000us         0.00%       0.000us       0.000us     769.242ms        12.77%     769.242ms      51.283ms            15  
+## Call CompiledFxGraph fhiso73k6hy5tfl5ptov2fe4z4dr...         0.00%     784.786us         0.01%       1.182ms      78.809us       0.000us         0.00%     650.881ms      43.392ms            15  
+triton_red_fused__to_copy_add_div_expand_mul_neg_sig...         0.00%     299.747us         0.00%     397.344us      26.490us     650.881ms        10.80%     650.881ms      43.392ms            15  
+triton_red_fused__to_copy_add_div_expand_mul_neg_sig...         0.00%       0.000us         0.00%       0.000us       0.000us     650.881ms        10.80%     650.881ms      43.392ms            15  
+## Call CompiledFxGraph fhiso73k6hy5tfl5ptov2fe4z4dr...         0.00%       0.000us         0.00%       0.000us       0.000us     650.881ms        10.80%     650.881ms      43.392ms            15  
+[pl][module]hepattn.models.maskformer.MaskFormer: mo...         0.01%       1.382ms         3.59%     576.357ms     192.119ms       0.000us         0.00%     564.514ms     188.171ms             3  
+                     aten::scaled_dot_product_attention         0.01%       1.342ms         0.13%      20.918ms     290.534us       0.000us         0.00%     515.792ms       7.164ms            72  
+[pl][module]hepattn.models.decoder.MaskFormerDecoder...         0.02%       2.709ms         2.87%     462.145ms     154.048ms       0.000us         0.00%     460.187ms     153.396ms             3  
+[pl][module]hepattn.models.decoder.MaskFormerDecoder...         0.00%       0.000us         0.00%       0.000us       0.000us     459.765ms         7.63%     459.765ms     153.255ms             3  
+## Call CompiledFxGraph fm2btotd6suycfx4ihflheojxnas...         0.01%     986.568us         0.01%       1.401ms      93.373us       0.000us         0.00%     433.549ms      28.903ms            15  
+triton_red_fused__to_copy_div_expand_mul_sigmoid_sub...         0.00%     317.475us         0.00%     414.031us      27.602us     433.549ms         7.20%     433.549ms      28.903ms            15  
+triton_red_fused__to_copy_div_expand_mul_sigmoid_sub...         0.00%       0.000us         0.00%       0.000us       0.000us     433.549ms         7.20%     433.549ms      28.903ms            15  
+## Call CompiledFxGraph fm2btotd6suycfx4ihflheojxnas...         0.00%       0.000us         0.00%       0.000us       0.000us     433.549ms         7.20%     433.549ms      28.903ms            15  
+                                       aten::layer_norm         0.01%       1.123ms         0.10%      15.309ms      40.501us       0.000us         0.00%     196.976ms     521.101us           378  
+               aten::_scaled_dot_product_attention_math         0.00%     192.720us         0.03%       4.653ms     387.778us       0.000us         0.00%     195.401ms      16.283ms            12  
+                                              aten::bmm         0.02%       2.991ms         0.03%       4.111ms      25.854us     141.047ms         2.34%     141.994ms     893.044us           159  
+autograd::engine::evaluate_function: NativeLayerNorm...         0.01%       2.059ms         0.10%      16.427ms      76.052us       0.000us         0.00%     114.281ms     529.077us           216  
+void at::native::unrolled_elementwise_kernel<at::nat...         0.00%       0.000us         0.00%       0.000us       0.000us     112.200ms         1.86%     112.200ms      93.267us          1203  
+                               NativeLayerNormBackward0         0.01%     930.019us         0.09%      14.225ms      65.858us       0.000us         0.00%     111.944ms     518.258us           216  
+                       aten::native_layer_norm_backward         0.01%       2.347ms         0.08%      13.295ms      61.552us     100.895ms         1.67%     111.944ms     518.258us           216  
+[pl][module]hepattn.models.decoder.MaskFormerDecoder...         0.00%     276.501us         0.11%      17.471ms       5.824ms       0.000us         0.00%     110.240ms      36.747ms             3  
+[pl][module]hepattn.models.decoder.MaskFormerDecoder...         0.00%     279.452us         0.09%      14.285ms       4.762ms       0.000us         0.00%     103.915ms      34.638ms             3  
+[pl][module]hepattn.models.decoder.MaskFormerDecoder...         0.00%     247.654us         0.08%      12.269ms       4.090ms       0.000us         0.00%     103.834ms      34.611ms             3  
+[pl][module]hepattn.models.decoder.MaskFormerDecoder...         0.00%     271.246us         0.08%      13.200ms       4.400ms       0.000us         0.00%     103.657ms      34.552ms             3  
+autograd::engine::evaluate_function: ToCopyBackward0...         0.03%       5.234ms         0.13%      21.501ms      18.664us       0.000us         0.00%     100.264ms      87.035us          1152  
+                                aten::native_layer_norm         0.02%       3.008ms         0.04%       6.512ms      30.149us      95.033ms         1.58%      96.184ms     445.298us           216  
+void at::native::(anonymous namespace)::vectorized_l...         0.00%       0.000us         0.00%       0.000us       0.000us      95.033ms         1.58%      95.033ms     439.966us           216  
+autograd::engine::evaluate_function: ScaledDotProduc...         0.00%     177.572us         0.01%       2.296ms     191.366us       0.000us         0.00%      93.281ms       7.773ms            12  
+            ScaledDotProductEfficientAttentionBackward0         0.01%     843.050us         0.01%       2.119ms     176.568us       0.000us         0.00%      93.281ms       7.773ms            12  
+aten::_scaled_dot_product_efficient_attention_backwa...         0.00%     596.139us         0.01%       1.276ms     106.314us       0.000us         0.00%      93.281ms       7.773ms            12  
+                    aten::_efficient_attention_backward         0.00%     168.384us         0.00%     569.267us      47.439us      88.396ms         1.47%      93.281ms       7.773ms            12  
+      autograd::engine::evaluate_function: BmmBackward0         0.00%     329.364us         0.02%       2.452ms      54.483us       0.000us         0.00%      90.212ms       2.005ms            45  
+                                           BmmBackward0         0.00%     183.857us         0.01%       2.122ms      47.164us       0.000us         0.00%      90.212ms       2.005ms            45  
+fmha_cutlassB_bf16_aligned_64x64_k32_sm80(PyTorchMem...         0.00%       0.000us         0.00%       0.000us       0.000us      88.396ms         1.47%      88.396ms       7.366ms            12  
+    autograd::engine::evaluate_function: AddmmBackward0         0.03%       4.318ms         0.31%      49.359ms     140.623us       0.000us         0.00%      86.939ms     247.689us           351  
+                                             aten::add_         0.05%       7.835ms         0.21%      33.565ms      13.304us      85.981ms         1.43%      86.070ms      34.114us          2523  
+[pl][module]hepattn.models.maskformer.MaskFormer: mo...         0.00%       0.000us         0.00%       0.000us       0.000us      84.953ms         1.41%      84.953ms      28.318ms             3  
+[pl][module]hepattn.models.encoder.Encoder: model.en...         0.00%       0.000us         0.00%       0.000us       0.000us      82.883ms         1.38%      82.883ms      27.628ms             3  
+                                        ToCopyBackward0         0.01%       1.703ms         0.09%      15.132ms      13.135us       0.000us         0.00%      81.082ms      70.384us          1152  
+                                            aten::clone         0.02%       3.965ms         0.16%      26.506ms      18.330us       0.000us         0.00%      78.049ms      53.976us          1446  
+                                    aten::_safe_softmax         0.00%     133.759us         0.01%       1.055ms      87.925us       0.000us         0.00%      75.663ms       6.305ms            12  
+[pl][module]hepattn.models.encoder.Residual: model.d...         0.00%     199.479us         0.03%       5.230ms       1.743ms       0.000us         0.00%      63.543ms      21.181ms             3  
+[pl][module]hepattn.models.encoder.Encoder: model.en...         0.01%       1.797ms         0.42%      67.908ms      22.636ms       0.000us         0.00%      63.468ms      21.156ms             3  
+[pl][module]hepattn.models.encoder.Residual: model.d...         0.00%     189.063us         0.03%       4.685ms       1.562ms       0.000us         0.00%      60.992ms      20.331ms             3  
+[pl][module]hepattn.models.encoder.Residual: model.d...         0.00%     170.921us         0.03%       4.066ms       1.355ms       0.000us         0.00%      60.919ms      20.306ms             3  
+[pl][module]hepattn.models.encoder.Residual: model.d...         0.00%     190.983us         0.03%       4.287ms       1.429ms       0.000us         0.00%      60.743ms      20.248ms             3  
+[pl][module]hepattn.models.attention.Attention: mode...         0.00%     543.243us         0.03%       4.668ms       1.556ms       0.000us         0.00%      60.191ms      20.064ms             3  
+[pl][module]hepattn.models.attention.Attention: mode...         0.00%     562.482us         0.03%       4.313ms       1.438ms       0.000us         0.00%      60.171ms      20.057ms             3  
+[pl][module]hepattn.models.attention.Attention: mode...         0.00%     504.947us         0.02%       3.731ms       1.244ms       0.000us         0.00%      60.098ms      20.033ms             3  
+[pl][module]hepattn.models.attention.Attention: mode...         0.00%       0.000us         0.00%       0.000us       0.000us      60.052ms         1.00%      60.052ms      20.017ms             3  
+[pl][module]hepattn.models.attention.Attention: mode...         0.00%       0.000us         0.00%       0.000us       0.000us      60.031ms         1.00%      60.031ms      20.010ms             3  
+[pl][module]hepattn.models.attention.Attention: mode...         0.00%       0.000us         0.00%       0.000us       0.000us      59.958ms         1.00%      59.958ms      19.986ms             3  
+[pl][module]hepattn.models.attention.Attention: mode...         0.00%     532.240us         0.02%       3.912ms       1.304ms       0.000us         0.00%      59.922ms      19.974ms             3  
+[pl][module]hepattn.models.attention.Attention: mode...         0.00%       0.000us         0.00%       0.000us       0.000us      59.783ms         0.99%      59.783ms      19.928ms             3  
+                                           aten::linear         0.02%       3.182ms         0.52%      84.132ms     126.897us       0.000us         0.00%      58.706ms      88.546us           663  
+autograd::engine::evaluate_function: ScaledDotProduc...         0.00%     169.638us         0.01%       1.813ms     151.080us       0.000us         0.00%      57.917ms       4.826ms            12  
+                ScaledDotProductFlashAttentionBackward0         0.00%     460.871us         0.01%       1.643ms     136.943us       0.000us         0.00%      57.917ms       4.826ms            12  
+     aten::_scaled_dot_product_flash_attention_backward         0.00%     476.541us         0.01%       1.182ms      98.537us       0.000us         0.00%      57.917ms       4.826ms            12  
+                        aten::_flash_attention_backward         0.00%     186.494us         0.00%     587.563us      48.964us      57.917ms         0.96%      57.917ms       4.826ms            12  
+                                           aten::matmul         0.00%     211.519us         0.01%       2.291ms      76.367us       0.000us         0.00%      55.978ms       1.866ms            30  
+                                              aten::sum         0.05%       7.607ms         0.08%      13.491ms      16.118us      50.963ms         0.85%      51.395ms      61.404us           837  
+                                 aten::_index_put_impl_         0.04%       6.080ms        10.70%        1.721s      13.338ms      29.454ms         0.49%      50.248ms     389.520us           129  
+                                               aten::mm         0.18%      29.673ms         0.21%      33.952ms      48.365us      50.133ms         0.83%      50.133ms      71.415us           702  
+void pytorch_flash::flash_bwd_dq_dk_dv_loop_seqk_par...         0.00%       0.000us         0.00%       0.000us       0.000us      50.021ms         0.83%      50.021ms       4.168ms            12  
+                                         AddmmBackward0         0.01%       1.833ms         0.24%      38.369ms     109.314us       0.000us         0.00%      50.003ms     142.458us           351  
+void at::native::(anonymous namespace)::layer_norm_g...         0.00%       0.000us         0.00%       0.000us       0.000us      47.977ms         0.80%      47.977ms     222.114us           216  
+void at::native::vectorized_elementwise_kernel<8, at...         0.00%       0.000us         0.00%       0.000us       0.000us      47.596ms         0.79%      47.596ms      36.058us          1320  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      46.959ms         0.78%      46.959ms       1.565ms            30  
+void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_...         0.00%       0.000us         0.00%       0.000us       0.000us      45.871ms         0.76%      45.871ms       1.911ms            24  
+                                          aten::reshape         0.01%       2.008ms         0.04%       6.854ms       3.400us       0.000us         0.00%      45.079ms      22.361us          2016  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 16.076s
+Self CUDA time total: 6.024s

@@ -1,0 +1,33 @@
+# Throwaway Phase-2 profiling overlay — layer on top of base.yaml via a second --config.
+# See studies/b200_utilization/profiling/README.md and NOTES.md. Do NOT use for real training.
+#
+# NOTE: no `schedule:` key on purpose — PyTorchProfiler forwards it verbatim to
+# torch.profiler.profile, which needs a callable, not a YAML dict. The profiling
+# window is bounded by max_steps instead.
+# NOTE: callbacks list overrides base.yaml's — identical except hepattn.callbacks.Compile
+# is removed, so the op-level trace is clean eager mode (see README gotcha).
+trainer:
+  max_steps: 12
+  limit_val_batches: 0
+  profiler:
+    class_path: lightning.pytorch.profilers.PyTorchProfiler
+    init_args:
+      dirpath: studies/b200_utilization/profiling/profile_logs/
+      filename: clic_profile_phase2
+      export_to_chrome: true
+      record_shapes: false
+      sort_by_key: cuda_time_total
+      row_limit: 100
+  callbacks:
+    - class_path: hepattn.callbacks.InferenceTimer
+    - class_path: hepattn.callbacks.SaveConfig
+    - class_path: hepattn.callbacks.Checkpoint
+      init_args:
+        monitor: val/loss
+        save_last: true
+    - class_path: hepattn.experiments.clic.PflowPredictionWriter
+    - class_path: lightning.pytorch.callbacks.ModelSummary
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+      init_args:
+        refresh_rate: 50

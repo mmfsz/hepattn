@@ -1,6 +1,16 @@
 # CLIC Training Profiling Study
 
-**Status:** Planned, not started (deferred — low priority while cluster resources are in use).
+**Status:** DONE (2026-07-27). Phase 1 (job 38122563): **not data-bound**
+(`train_dataloader_next` = 0.42%); Phase 1b skipped per decision rule. Phase 2
+(job 38127863): GPU 70% busy / 30% idle; busy time is ~53% triton loss kernels +
+23.5% pageable DtoH cost-matrix copy for the matcher; **only ~7% actual model
+compute**. Bottleneck = loss/matcher pipeline. Phase 3 not needed. See
+[NOTES.md](NOTES.md) and the "Profiling results" section of
+[`../training_runs_report.md`](../training_runs_report.md). Fix experiments (2026-07-28):
+pinned-memory DtoH transfer **kept, −11.6% step time**; lap1015 solver **rejected**
+(GIL-bound binding, 1.9× slower). Baseline configs untouched; the kept fix lives in
+`models/matcher.py`. A beginner-friendly walkthrough of the whole study is in
+[PROFILING_EXPLAINED.md](PROFILING_EXPLAINED.md).
 
 **Goal:** Find out *why the B200 GPU is underutilized* during CLIC training, so we
 know whether the bottleneck is the data pipeline, host-side Python/CPU work, the
@@ -61,7 +71,12 @@ comparison. Key facts:
   in the profiling config, or profile only *after* warmup steps.
 - **CPU scipy Hungarian matcher** runs every step inside `model.loss`
   (`matcher.default_solver: scipy` in `base.yaml`). On a fast B200 this is a prime
-  GPU-idle stall — watch for it specifically in Phase 2/3 traces.
+  GPU-idle stall — watch for it specifically in Phase 2/3 traces. Note it is
+  parallelized across the batch (`parallel_solver: true`, `n_jobs: 16`), so expect a
+  16-way CPU fan-out in traces, not a single-thread scipy call.
+- **Do not set `trainer.logger: false`** in the profiling config: `utils/cli.py`
+  `link_arguments("name", "trainer.logger.init_args.name")` assumes a logger object
+  exists. Leave the (offline) Comet logger as-is; its overhead is negligible.
 - **`MyThroughputMonitor` callback (`callbacks/throughput_monitor.py`) is stale** — its
   `dummy_forward` uses an old input schema (`batch["hit"]`, `phi/theta/r`) that no longer
   matches the current `(inputs, targets)` batch format. Do NOT enable it as-is; it will
@@ -109,7 +124,7 @@ minutes of compute (the queue wait dominates).
 ## 5. The plan (execute in order; stop early if Phase 1 answers the question)
 
 ### Phase 0 — isolate
-Clone `submit_training_hpg_1gpu.sh` → `studies/profiling/submit_profile_1gpu.sh`.
+Clone `submit_training_hpg_1gpu.sh` → `studies/b200_utilization/profiling/submit_profile_1gpu.sh`.
 Base it on 1× B200. Only `--time`, `--mem`, and the trainer flags change vs. the
 original (resources otherwise identical: 1 node, 1 B200, `--cpus-per-task=16`).
 
@@ -164,7 +179,7 @@ original (resources otherwise identical: 1 node, 1 B200, `--cpus-per-task=16`).
      profiler:
        class_path: lightning.pytorch.profilers.PyTorchProfiler
        init_args:
-         dirpath: ./studies/profiling/profile_logs/
+         dirpath: ./studies/b200_utilization/profiling/profile_logs/
          filename: clic_profile
          export_to_chrome: true
          record_shapes: true
@@ -199,4 +214,4 @@ When done, append a **"Profiling results"** section to
 - any fix applied (which knob, the before/after throughput), and
 - whether the fix was promoted into a real config (and from which run onward).
 
-Also drop the raw profiler tables / trace files under `studies/profiling/profile_logs/`.
+Also drop the raw profiler tables / trace files under `studies/b200_utilization/profiling/profile_logs/`.

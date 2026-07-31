@@ -1,0 +1,10 @@
+# Throwaway overlay: switch the matcher to the lap1015_late exact solver.
+# Layer as: --config configs/base.yaml --config configs/profile.yaml --config configs/profile_lap1015.yaml
+# Single-variable change vs. the Phase 1 baseline (job 38122563) — everything else identical.
+# See studies/b200_utilization/profiling/NOTES.md.
+model:
+  model:
+    init_args:
+      matcher:
+        init_args:
+          default_solver: lap1015_late
