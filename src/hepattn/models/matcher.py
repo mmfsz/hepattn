@@ -12,7 +12,14 @@ import scipy
 import torch
 from torch import nn
 
+from hepattn.models.device_lap import assignment_to_permutation, batched_auction
 from hepattn.utils.import_utils import check_import_safe
+
+# Solvers that run on whichever device the costs are already on, rather than on the host.
+# Opt-in via Matcher(device_solver=...); see the module docstring of hepattn.models.device_lap.
+DEVICE_SOLVERS = {
+    "auction": batched_auction,
+}
 
 _POOL_LOCK = Lock()
 _THREAD_POOLS: dict[int, ThreadPool] = {}
@@ -211,6 +218,10 @@ class Matcher(nn.Module):
         parallel_solver: bool = False,
         parallel_backend: Literal["thread", "process"] = "thread",
         n_jobs: int = 8,
+        device_solver: str | None = None,
+        device_solver_eps: float = 1e-6,
+        device_solver_max_iters: int = 10_000,
+        device_solver_fallback: bool = True,
         verbose: bool = False,
     ):
         super().__init__()
@@ -232,6 +243,21 @@ class Matcher(nn.Module):
             Parallel backend when parallel_solver is True. One of: 'thread', 'process'.
         n_jobs: int
             Number of jobs to use for parallel matching. Only used if parallel_solver is True.
+        device_solver : str | None
+            If set, solve on whichever device the costs already live on instead of copying
+            them to the host, which removes the device-to-host transfer and the host stall
+            that goes with it. Defaults to None, i.e. the host solvers above. Worth turning on
+            only when training is host-bound: on a GPU that is already saturated the solver's
+            own kernels cost more than the stall they remove.
+        device_solver_eps : float
+            Bidding increment for the auction solver, in units of each problem's cost range.
+            The assignment is within num_valid_targets * eps of optimal.
+        device_solver_max_iters : int
+            Cap on auction rounds before a problem is declared unsolved and handed to the host
+            solver. Guards against a degenerate cost matrix looping forever.
+        device_solver_fallback : bool
+            If true, problems the device solver does not converge on are re-solved with
+            default_solver on the host. If false, non-convergence raises.
         verbose : bool
             If true, extra information on solver timing is printed.
         """
@@ -239,6 +265,8 @@ class Matcher(nn.Module):
             raise ValueError(f"Unknown solver: {default_solver}. Available solvers: {list(SOLVERS.keys())}")
         if parallel_backend not in {"thread", "process"}:
             raise ValueError(f"parallel_backend must be 'thread' or 'process', got: {parallel_backend}")
+        if device_solver is not None and device_solver not in DEVICE_SOLVERS:
+            raise ValueError(f"Unknown device solver: {device_solver}. Available device solvers: {list(DEVICE_SOLVERS.keys())}")
         if default_solver.startswith("lap1015") and parallel_solver and parallel_backend == "thread" and not _lap1015_releases_gil():
             warnings.warn(
                 f"The installed lap1015 extension does not release the GIL while solving, so the '{default_solver}' solver "
@@ -254,9 +282,14 @@ class Matcher(nn.Module):
         self.parallel_solver = parallel_solver
         self.parallel_backend = parallel_backend
         self.n_jobs = n_jobs
+        self.device_solver = device_solver
+        self.device_solver_eps = device_solver_eps
+        self.device_solver_max_iters = device_solver_max_iters
+        self.device_solver_fallback = device_solver_fallback
         self.step = 0
         self.verbose = verbose
         self._pinned_buffer = None
+        self.device_fallbacks = 0
 
     def _prepare_costs(self, costs, object_valid_mask=None, query_valid_mask=None):
         """Turn a [batch, num_pred, num_true] cost tensor into the host array the solvers want.
@@ -311,6 +344,64 @@ class Matcher(nn.Module):
         staged.copy_(costs_t)
         return staged.numpy(), lengths_np
 
+    def _match_on_device(self, costs, object_valid_mask=None, query_valid_mask=None) -> torch.Tensor:
+        """Match without ever leaving the device the costs are on.
+
+        This is the same preparation as :meth:`_prepare_costs` minus everything that only
+        exists to serve a host solver: there is no sentinel fill (the device solver treats
+        non-finite and disallowed entries as forbidden directly), no pinned staging buffer and
+        no ``.numpy()``. The one host round trip left is reading ``max(num_valid_targets)`` to
+        crop the padded target rows, which is four bytes against the ~1 GB the host path moves.
+
+        Returns:
+            [batch, num_pred] permutation tensor, on the costs' device.
+
+        Raises:
+            RuntimeError: If the solver does not converge and device_solver_fallback is False.
+        """
+        costs = costs.detach().to(torch.float32)
+        batch, num_pred, num_true = costs.shape
+
+        if object_valid_mask is None:
+            lengths = torch.full((batch,), num_true, dtype=torch.long, device=costs.device)
+        else:
+            lengths = object_valid_mask.detach().bool().to(costs.device).sum(dim=1)
+
+        max_len = int(lengths.max()) if batch else 0
+        costs_t = costs.transpose(1, 2)[:, :max_len].contiguous()
+
+        col_allowed = None if query_valid_mask is None else query_valid_mask.detach().bool().to(costs.device)
+        row_valid = torch.arange(max_len, device=costs.device)[None, :] < lengths[:, None]
+
+        assigned, solved = DEVICE_SOLVERS[self.device_solver](
+            costs_t,
+            row_valid,
+            col_allowed,
+            eps_start=self.device_solver_eps,
+            eps_final=self.device_solver_eps,
+            max_iters=self.device_solver_max_iters,
+        )
+        pred_idxs = assignment_to_permutation(assigned, lengths, num_pred)
+
+        # Non-convergence is expected to be rare, so this sync is the price of not having to
+        # trust the solver blindly. Falling back per event keeps the result exact.
+        if bool(solved.all()):
+            return pred_idxs
+        if not self.device_solver_fallback:
+            raise RuntimeError(
+                f"The '{self.device_solver}' device solver failed to converge on "
+                f"{int((~solved).sum())}/{batch} problems within {self.device_solver_max_iters} iterations."
+            )
+
+        failed = (~solved).nonzero(as_tuple=True)[0]
+        self.device_fallbacks += int(failed.numel())
+        host_costs = costs_t[failed].cpu().numpy()
+        host_lengths = lengths[failed].cpu().numpy()
+        default_idx = np.arange(num_pred, dtype=np.int32)
+        repaired = [match_individual(SOLVERS[self.solver], host_costs[k][: host_lengths[k]], default_idx) for k in range(len(failed))]
+        pred_idxs[failed] = torch.from_numpy(np.stack(repaired)).to(device=pred_idxs.device, dtype=pred_idxs.dtype)
+        return pred_idxs
+
     def _solve(self, costs_t: np.ndarray, lengths_np: np.ndarray, pred_dim: int) -> torch.Tensor:
         """Run the LAP solver over a prepared [batch, max_true, num_pred] host array."""
         if self.parallel_solver:
@@ -328,12 +419,22 @@ class Matcher(nn.Module):
         if not isinstance(costs, torch.Tensor):
             costs = torch.from_numpy(np.asarray(costs))
 
+        if self.device_solver is not None:
+            return self._match_on_device(costs, object_valid_mask, query_valid_mask)
+
         costs_t, lengths_np = self._prepare_costs(costs, object_valid_mask, query_valid_mask)
 
         return self._solve(costs_t, lengths_np, costs.shape[1])
 
     @torch.no_grad()
     def forward(self, costs, object_valid_mask=None, query_valid_mask=None):
+        # The device path bypasses solver adaptation: the host solvers it would be timed
+        # against are on the other side of the transfer this exists to avoid.
+        if self.device_solver is not None:
+            pred_idxs = self._match_on_device(costs, object_valid_mask, query_valid_mask)
+            self.step += 1
+            return pred_idxs
+
         pred_dim = costs.shape[1]
         costs_t, lengths_np = self._prepare_costs(costs, object_valid_mask, query_valid_mask)
 
