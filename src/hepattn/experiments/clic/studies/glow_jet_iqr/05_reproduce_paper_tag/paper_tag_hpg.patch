@@ -1,0 +1,71 @@
+diff --git a/pyproject.toml b/pyproject.toml
+index 0e9bf3d..e40ad65 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -54,7 +54,7 @@ platforms = ["linux-64"]
+ #platforms = ["linux-aarch64"]
+ 
+ [tool.pixi.pypi-dependencies]
+-hepattn = { path = ".", editable = true }
++# hepattn = { path = ".", editable = true }  # excluded from pixi; built separately via pip (pixi passes a config-setting scikit-build-core rejects)
+ torch = { version = "==2.7.0", index = "https://download.pytorch.org/whl/test/cu126"}
+ 
+ [tool.pixi.pypi-options]
+diff --git a/src/hepattn/experiments/clic/configs/base.yaml b/src/hepattn/experiments/clic/configs/base.yaml
+index 7317972..0f202b9 100644
+--- a/src/hepattn/experiments/clic/configs/base.yaml
++++ b/src/hepattn/experiments/clic/configs/base.yaml
+@@ -22,16 +22,19 @@ data:
+ 
+   num_objects: &num_particles 150
+ 
+-  train_path: /share/gpu1/syw24/dmitrii_clic/train_clic_fix.root
+-  valid_path: /share/gpu1/syw24/dmitrii_clic/val_clic_fix.root
+-  test_path: /share/gpu1/syw24/dmitrii_clic/test_clic_fix.root
++  # HPG data paths (patched from the authors' /share/gpu1/... paths — same dataset, same filenames).
++  # test_path uses our common-infer file (test is not used during `fit`).
++  train_path: /blue/avery/m.mazza/projects/fastml/hepattn/data/clic/train_clic_fix.root
++  valid_path: /blue/avery/m.mazza/projects/fastml/hepattn/data/clic/val_clic_fix.root
++  test_path: /blue/avery/m.mazza/projects/fastml/hepattn/data/clic/test_clic_common_infer.root
+ 
+   num_workers: 16
+   num_train: -1
+   num_test: -1
+   num_val: 5000
+ 
+-  batch_size: 512
++  # 170/GPU x 6 L4 = global 1020 ~= paper's 512x2=1024 (paper ran 2x A100; L4 can't hold 512/GPU).
++  batch_size: 170
+   incidence_cutval: 0.01
+ 
+   scale_dict_path: &scale_dict_path configs/clic_var_transform.yaml
+diff --git a/src/hepattn/utils/cli.py b/src/hepattn/utils/cli.py
+index b4a3845..0380b8c 100644
+--- a/src/hepattn/utils/cli.py
++++ b/src/hepattn/utils/cli.py
+@@ -86,6 +86,9 @@ class CLI(LightningCLI):
+             # Set the timestampped dir
+             dirname = f"{name}_{timestamp}"
+             log_dir_timestamp = str(Path(log_dir / dirname).resolve())
++            # CometLogger in offline mode writes its archive into save_dir but will not create
++            # it, and nothing else does before the logger is constructed.
++            Path(log_dir_timestamp).mkdir(parents=True, exist_ok=True)
+             sc["trainer.default_root_dir"] = log_dir_timestamp
+             if sc[log]:
+                 sc[f"{log}.init_args.save_dir"] = log_dir_timestamp
+@@ -119,6 +122,15 @@ class CLI(LightningCLI):
+     def after_instantiate_classes(self) -> None:
+         sc = self.config[self.subcommand]
+ 
++        if self.subcommand == "fit":
++            # Persist train + val losses to disk as a metrics.csv, independent of the Comet
++            # logger, whose offline archive does not survive an ephemeral TMPDIR on HPG.
++            from lightning.pytorch.loggers import CSVLogger
++
++            if not any(type(lg).__name__ == "CSVLogger" for lg in self.trainer.loggers):
++                csv_logger = CSVLogger(save_dir=self.trainer.default_root_dir, name="csv_metrics", version="")
++                self.trainer.loggers = [*self.trainer.loggers, csv_logger]
++
+         if self.subcommand == "test":
+             ckpt_path = sc["ckpt_path"] or get_best_epoch(Path(sc["config"][0].rel_path))
+             # Workaround to store ckpt dir for prediction writer since trainer.ckpt_path gets set to none somewhere

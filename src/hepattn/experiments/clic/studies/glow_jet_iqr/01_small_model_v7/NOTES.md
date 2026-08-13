@@ -1,6 +1,21 @@
 # Task 1 — 700k small model (v7) training + IQR eval
 
-**Status:** 🟡 2-node run FINISHED; eval running (job 36520192) → plotting. 1-node still running.
+**Status:** ✅ DONE (2026-07-14) — BOTH v7 runs trained + eval'd; **capacity is NOT the cause** (triple-checked).
+
+## Final verdict (2026-07-14) — triple check complete
+Both 700k runs are now evaluated on the common test set (19,722 events) and overlaid against the
+10.1M bf16 baseline + fp32 + Pandora in `../jet_iqr_new_evals.png` (`../plot_new_evals_iqr.py`):
+- **Both v7 runs (1-node job 36472892 best epoch=197 val 4.25845; 2-node job 36450143 best
+  epoch=192 val 4.33644) show the SAME inverted rising IQR trend** (~0.077 @10 GeV → ~0.104 @190),
+  a small constant offset above the 10.1M baseline. The two v7 runs track each other closely →
+  consistent, not a fluke of one training.
+- A **14× smaller** model (0.70M vs 10.1M) reproduces the exact trend → **model capacity / param
+  count is NOT the driver**; the paper's 12M-vs-our-10.1M gap is a red herring for the IQR trend.
+- 1-node eval = job 37145280 (state TIMEOUT but **inference succeeded** — the ROOT was written
+  before the wall; only torch-inductor's atexit compile-worker shutdown hung 300s afterwards).
+  The old partial epoch-105 root stays renamed `*.PARTIAL-1node-stilltraining` and is not plotted.
+
+Reinforces task 5: the cause is the post-paper model **refactor**, not size.
 
 ## Job→folder mapping (VERIFIED via each folder's `metadata.yaml` slurm_job_id) — 2026-07-07
 The two folders both start `clic_v7_20260706-T18141…` (both jobs started 18:14); the timestamp
@@ -58,7 +73,21 @@ capacity matters and the paper's larger 12M model is a plausible explanation.
 - [ ] verdict recorded (capacity matters? Y/N)
 
 ## Results — 2-node v7 (epoch 192) DONE 2026-07-07 → capacity is NOT the cause
-Figure: `jet_iqr_v7_vs_v6.png` (v7 2-node vs v6 family vs Pandora; 1-node pending).
+Figure: `jet_iqr_v7_vs_v6.png` (v7 2-node vs v6 family vs Pandora; 1-node pending **at the time**
+— both runs now appear, in both conventions, in `../07_paper_tag_small/jet_iqr_paper_small.png`).
+
+> ### ⚠️ 2026-08-13 — EVERY NUMBER IN THIS FILE IS THE **REGRESSION** (`mpflow`) CONVENTION
+> This task closed 2026-07-14, six days before the discovery that the paper plots the **PROXY**
+> (`mpflow_proxy`) output (see `../05_reproduce_paper_tag/NOTES.md`). Nothing here is wrong — the
+> regression numbers below were re-derived independently on 2026-08-13 and match digit-for-digit —
+> but they are **not** directly comparable to the paper's Fig. 4.
+> **v7's proxy curves were first computed 2026-08-13**, in `../07_paper_tag_small/`:
+> 2-node `0.080 0.064 0.060 0.058 0.058 0.059 0.057 0.064 0.064 0.055`,
+> 1-node `0.079 0.065 0.059 0.060 0.057 0.060 0.060 0.068 0.069 0.056`.
+> The proxy convention flatters HEAD a lot — the curves look nearly flat and the naive
+> first-vs-last-bin trend even comes out negative. **The conclusion below is unchanged**: both v7
+> runs still rise across E90→E170 in proxy (0.058→0.064 and 0.057→0.069) and rise outright in
+> regression. But quote the convention whenever you quote these numbers.
 
 Jet-E response IQR (p75−p25) vs truth jet E [GeV]:
 | E | 10 | 30 | 50 | 70 | 90 | 110 | 130 | 150 | 170 | 190 |
@@ -73,12 +102,20 @@ model 10.1M→0.7M does not flip or flatten the trend. → **Capacity is not the
 paper's 12M-vs-our-10.1M gap is a red herring. Consistent with task 4 (cause = post-paper model
 refactor). Task 5 (paper-tag retrain) is the confirming test.
 
-TODO: eval the 1-node v7 (36472892) when it finishes 200 epochs → re-run `plot_v7_iqr.py` to add
-it (auto-discovered; the partial epoch-105 root was renamed to `*.PARTIAL-1node-stilltraining`).
+~~TODO: eval the 1-node v7 (36472892)~~ — **DONE** (eval 37145280, 2026-07-14); the stale partial
+epoch-105 root remains renamed `*.PARTIAL-1node-stilltraining`. Table filled in 2026-08-13; the
+1-node run reached epoch 197 / val_loss 4.25845.
+
+Regression convention (`mpflow`), matching the table above:
 
 | Run | best val_loss | IQR @ ~10 GeV | IQR @ ~90 | IQR @ ~170 | IQR @ ~190 |
 |---|---|---|---|---|---|
-| v7 1-node | | | | | |
-| v7 2-node | | | | | |
+| v7 1-node (36472892) | 4.258 | 0.078 | 0.089 | 0.102 | 0.104 |
+| v7 2-node (36450143) | 4.336 | 0.082 | 0.087 | 0.099 | 0.101 |
 | v6 3×L4 (ref) | 3.788 | 0.075 | 0.077 | 0.099 | 0.096 |
 | Pandora (ref) | — | 0.091 | 0.061 | 0.056 | 0.054 |
+
+**Note (2026-08-13): the better val_loss is the WORSE run on this metric.** The 1-node v7 beats the
+2-node on val_loss (4.258 vs 4.336) but has the worse high-E IQR in both conventions (regression
+trend +0.026 vs +0.019; proxy 0.069 vs 0.064 @E170). Val_loss does not track the IQR trend — do not
+use it to pick checkpoints or to score commits in the phase-2 bisect.

@@ -1,6 +1,6 @@
 # Task 3 — fp32 (32-true) training + confirm paper precision
 
-**Status:** 🟡 fp32 training SUBMITTED (job 36518920, PENDING as of 2026-07-07) · paper-precision check ⬜ TODO
+**Status:** ✅ fp32 TRAINED + EVAL'D (2026-07-14) — **precision is NOT the cause**. · paper-precision check ⬜ TODO (3a)
 
 ## Setup log (2026-07-07)
 - Config: **`configs/clic_v6_fp32.yaml`** — full copy of `base.yaml` (v6, 10.1M) with ONLY
@@ -47,11 +47,31 @@ Eval the fp32 run (`../../submit_eval_run.sh`) and overlay its IQR vs the bf16 v
 `../00_cross_run/compare_runs_iqr.py`. If the trend is unchanged → precision is not the cause.
 
 ## Checklist
-- [ ] paper precision confirmed (or confirmed unstated) + upstream config checked
-- [ ] fp32 config written (32-true, attn_type torch)
-- [ ] training submitted → 200 epochs
-- [ ] eval'd → IQR overlay vs bf16
-- [ ] verdict (precision matters? Y/N)
+- [ ] paper precision confirmed (or confirmed unstated) + upstream config checked  ← only 3a left
+- [x] fp32 config written (32-true, attn_type torch)
+- [x] training submitted → 200 epochs (job 36518920, COMPLETED 2026-07-09; best epoch=197 val_loss=3.74189)
+- [x] eval'd → IQR overlay vs bf16 (eval job 37145279, COMPLETED 2026-07-14, 2m29s)
+- [x] verdict (precision matters? **NO**)
 
-## Results
-_(fill in)_
+## Results (2026-07-14)
+
+Trained genuinely full-fp32 end-to-end (`32-true`, `attn_type: torch`, `matmul_precision: highest`;
+slurm log showed the "TF32 available but not enabled" warnings that confirm real fp32). 200 epochs,
+no OOM at batch 128. Evaluated on the common test set (19,722 events).
+
+**Verdict: fp32 does NOT fix the inverted rising-IQR trend — precision is ruled out.**
+- The fp32 jet-E IQR **rises with energy just like every bf16 run** (~0.082 @10 GeV → ~0.101 @190),
+  while Pandora falls (0.091 → 0.054). Same 2× inversion.
+- The fp32 IQR curve sits **essentially on top of the bf16 3×L4 baseline** across the whole range,
+  and is even marginally *worse* at the highest-E bin. So the discrepancy is not a bf16 numerical
+  artifact.
+- Caveat (small, positive): fp32 gave the **best val-loss of all seven runs** (3.742 < 3.788 bf16)
+  and a slightly better median response at low E — a real but tiny quality gain that does NOT touch
+  the IQR *trend*.
+
+Overlay plot: `../jet_iqr_new_evals.png` (built by `../plot_new_evals_iqr.py`). Reinforces task 5
+(the cause is the post-paper model refactor, not a training knob).
+
+**Still open — 3a:** confirm what precision the *paper* used (check arXiv:2508.20092 + the
+`clic-paper`-tag config). Moot for the discrepancy now (fp32 vs bf16 makes no trend difference),
+but worth recording for completeness.
