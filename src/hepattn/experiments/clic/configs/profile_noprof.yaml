@@ -1,0 +1,9 @@
+# Throughput overlay with the profiler DISABLED — layer on top of base.yaml.
+# Companion to profile.yaml: identical run, but no SimpleProfiler, to measure how
+# much of the observed step time is profiler overhead rather than real work.
+# Read the throughput from the tqdm timestamps (steady state = steps 50 -> end).
+# See studies/b200_utilization/profiling/NOTES.md. Do NOT use for real training runs.
+trainer:
+  profiler: null
+  max_steps: 300
+  limit_val_batches: 0

@@ -5,6 +5,14 @@ and [`NOTES.md`](NOTES.md). No prior knowledge of this framework or of GPU
 performance work is assumed. If you already know what a CUDA kernel and a
 Hungarian matcher are, read NOTES.md instead — it's the same story in half the words.*
 
+> **Read §11 first if you are short of time.** The study set out to explain why a B200
+> was slower than three L4s, and §§2–10 are that investigation. But the largest finding
+> was not a performance one: the mask losses contained a silent broadcasting bug that
+> made the GPU do `batch_size` times too much work *and* trained the model on a distorted
+> objective. §11 covers what it was, how it was found, and what fixing it changed
+> (+25% throughput, physics unchanged). Everything before §11 was measured against the
+> buggy loss.
+
 ---
 
 ## 1. The mystery we set out to solve
@@ -737,3 +745,613 @@ That is a bug fix, but it is a behaviour change, so it is written down.
 `Memcpy DtoH (Device -> Pageable)` bar and the kernel-free idle gaps are easy to
 spot by eye. The raw evidence and per-job details for everything above are in
 [`NOTES.md`](NOTES.md).
+
+---
+
+## 10. Appendix: the "algebraic einsum rewrite", explained (candidate 7 — *not implemented*)
+
+Section 7 dismisses this idea in one line: *"the algebraic rewrite of the
+mask-cost einsums, which halves one GEMM; mathematically exact but not
+bit-identical, so it still wants a loss-curve check."* This appendix unpacks
+what that means, because the idea is genuinely elegant and worth understanding —
+and because **going and reading the actual code changed the verdict on how much
+it is worth here.** The trick is real and correct. The place we assumed it would
+pay off turns out not to be the place the GPU is actually spending its time.
+
+Nothing in this section has been implemented or measured. It is a design note,
+recorded so that whoever picks the study back up starts from the real code
+rather than the sketch.
+
+### 10.1 What the code actually computes
+
+Recall the setup from §2: the model proposes 150 candidate particles per event,
+each carrying a **mask** — a score for every detector hit saying "this hit is
+mine". Before we can compute a loss we must decide which candidate corresponds
+to which true particle, and to do that the Hungarian matcher needs a **cost
+matrix**: for every (predicted object *n*, true particle *m*) pair, a number
+saying how bad it would be to declare them a match.
+
+For masks, that number is a binary cross-entropy summed over hits. The code is
+`mask_bce_cost` in [`src/hepattn/models/loss.py`](../../../../../models/loss.py)
+(lines 231–255), and its last line is the thing under discussion:
+
+```python
+# loss.py:245-246 — two per-hit penalty tables, both [b, n, c]
+pos = F.binary_cross_entropy_with_logits(pred_logits, torch.ones_like(pred_logits),  weight=sample_weight, reduction="none")
+neg = F.binary_cross_entropy_with_logits(pred_logits, torch.zeros_like(pred_logits), weight=sample_weight, reduction="none")
+
+# loss.py:255 — the two big contractions
+return torch.einsum("bnc,bmc->bnm", pos, targets) + torch.einsum("bnc,bmc->bnm", neg, (1 - targets))
+```
+
+Reading the einsum subscripts out loud, because they carry all the information:
+
+- `b` — the **batch** axis: 2048 physics events, all handled in parallel.
+- `n` — the model's 150 **predicted** objects.
+- `m` — the 150 **true** particle slots.
+- `c` — the **constituents**, i.e. the detector hits (padded to 160 in CLIC,
+  `pflow_data.py:max_nodes = 160`).
+
+`"bnc,bmc->bnm"` says: for each event `b`, for each prediction `n`, for each
+target `m`, **sum over the hit axis `c`** the product of the two inputs. The hit
+axis disappears; it is contracted away. This is exactly a batched matrix
+multiplication of a 150×160 matrix with the transpose of another 150×160 matrix.
+
+What the two terms mean physically:
+
+- `pos[b,n,c]` is the penalty prediction *n* pays on hit *c* **if that hit really
+  does belong to the particle**. Contracting it with `targets` (which is 1 on the
+  hits that belong to particle *m*, 0 elsewhere) picks out exactly those hits and
+  adds up their penalties.
+- `neg[b,n,c]` is the penalty *n* pays on hit *c* **if that hit does not belong**.
+  Contracting it with `1 - targets` picks out the complementary set.
+
+So `cost[b,n,m] = (penalty on m's hits) + (penalty on everything else)`. Perfectly
+natural to write, and it costs **two** contractions over the hit axis.
+
+The same shape of expression appears once more, in `mask_focal_cost`
+(`loss.py:170-195`, last line 195):
+
+```python
+return torch.einsum("bnc,bmc->bnm", focal_pos, targets) + torch.einsum("bnc,bmc->bnm", focal_neg, (1 - targets))
+```
+
+Those two functions — `mask_bce_cost` and `mask_focal_cost` — are the **only**
+places in the file with this structure. That fact matters in §10.4.
+
+Both are invoked, once per decoder output, from
+`maskformer.py:_compute_decoder_costs` (line 263), which loops over the 5
+supervised decoder outputs and over each task, calling `task.cost(...)` and
+accumulating the per-task cost matrices into one matrix per layer
+(`task.py:588-598` for the mask task). Five layers × one call each = five
+evaluations of whichever mask cost functions the config switches on.
+
+### 10.2 The identity
+
+Here is the whole idea, in one line of school algebra. For any two numbers *A*
+and *B* and any weight *t*:
+
+```
+A·t + B·(1−t)  =  A·t − B·t + B  =  (A − B)·t + B
+```
+
+Applied along the hit axis, with *t* the target mask (1 for "this hit belongs to
+particle *m*", 0 otherwise), summing over hits *c*:
+
+```
+Σ_c pos[n,c]·t[m,c]  +  Σ_c neg[n,c]·(1 − t[m,c])
+      =  Σ_c (pos[n,c] − neg[n,c])·t[m,c]  +  Σ_c neg[n,c]
+```
+
+Look at what happened to the second term. On the left it is a contraction: it
+depends on both *n* and *m*, so you must compute 150 × 150 = 22 500 of them per
+event. On the right the target mask has vanished from it, so it depends only on
+*n* — it is **one number per predicted object**, 150 per event instead of 22 500,
+and it is simply added to every entry of that object's row. In tensor terms it
+went from a matrix multiply to a row sum plus a broadcast.
+
+**A tiny worked example.** One event, one prediction *n*, one true particle *m*,
+and only 4 hits. Say hits 1 and 2 belong to the particle and hits 3 and 4 do not,
+and the model happens to be predicting that quite well:
+
+| hit *c* | `pos` (penalty if hit is mine) | `neg` (penalty if hit is not mine) | `t` (truth) |
+|---|---|---|---|
+| 1 | 0.10 | 2.30 | 1 |
+| 2 | 0.20 | 1.80 | 1 |
+| 3 | 2.00 | 0.05 | 0 |
+| 4 | 3.00 | 0.02 | 0 |
+
+*The way the code does it now — two contractions:*
+
+```
+pos·t       = 0.10 + 0.20          = 0.30
+neg·(1−t)   = 0.05 + 0.02          = 0.07
+cost                               = 0.37
+```
+
+*The rewrite — one contraction plus a row sum:*
+
+```
+d = pos − neg = [−2.20, −1.60, +1.95, +2.98]
+d·t           = −2.20 + (−1.60)    = −3.80
+neg.sum()     = 2.30+1.80+0.05+0.02 = 4.17     ← does not depend on m at all
+cost          = −3.80 + 4.17        = 0.37     ✓ same answer
+```
+
+In code the rewrite is three lines:
+
+```python
+diff = pos - neg                                    # [b, n, c], one cheap elementwise pass
+cost = torch.einsum("bnc,bmc->bnm", diff, targets)  # ONE contraction instead of two
+cost = cost + neg.sum(-1).unsqueeze(-1)             # [b, n, 1], broadcasts across every m
+```
+
+Two things disappear along with the second einsum: the 150×150-per-event
+contraction itself, and the materialisation of `1 - targets`, which today
+allocates and writes a whole extra tensor the size of the target masks purely to
+hold "not". The identity is exact for real arithmetic — there is no
+approximation, no dropped term, no tolerance. (§10.5 is about floating point,
+which is a different matter.)
+
+Note that `torch.compile` will **not** do this for you. Compilers are allowed to
+fuse and reorder operations that provably give the same answer; they are not
+allowed to change which floating-point additions happen in which order, because
+that changes the result. This is a rewrite a human has to decide to make.
+
+### 10.3 Why halving the reads roughly halves the time — and how we know
+
+Section 3 introduced the distinction: a kernel is **compute-bound** (limited by
+arithmetic) or **memory-bound** (limited by how fast data can be streamed in and
+out of GPU memory). These contractions look like matrix multiplications, which
+are the textbook compute-bound operation — so why would removing one of them help
+by anything like a factor of two?
+
+Because of the shapes. Work out the bytes for the CLIC configuration
+(2048 events × 150 objects × 160 hits, fp32 = 4 bytes):
+
+| tensor | shape | size |
+|---|---|---|
+| `pos`, `neg`, `targets`, `1 - targets` | `[2048, 150, 160]` | **196.6 MB** each |
+| the cost matrix out | `[2048, 150, 150]` | **184.3 MB** |
+
+The arithmetic done on all that is 2 × 2048 × 150 × 150 × 160 ≈ 14.7 billion
+floating-point operations — which sounds enormous until you remember a B200 does
+tens of *trillions* per second. The contraction depth is only 160; there is very
+little arithmetic per byte fetched. So it behaves like a memory-bound kernel, and
+the currency that matters is **bytes moved**, not FLOPs.
+
+We do not have to take that on faith: it is measured in our own post-fix trace.
+The one mask-cost contraction that the CLIC config *does* run (§10.4) shows up as
+an `aten::bmm` — 15 calls (5 decoder outputs × 3 profiled steps) at **0.202 ms
+each**. Those bytes are 196.6 + 196.6 read + 184.3 written = 577.5 MB, so the
+kernel is sustaining roughly **2.9 TB/s**. That is a large fraction of the B200's
+memory bandwidth and nowhere near its arithmetic limit. Confirmed memory-bound,
+in this trace, at these shapes.
+
+For a kernel in that regime, time ≈ bytes ÷ bandwidth, and bandwidth is a
+property of the hardware you cannot change. So removing half the bytes really
+does remove close to half the time — unlike a compute-bound kernel, where
+removing half the arithmetic may just leave the memory system as the new
+ceiling.
+
+Counting honestly for `mask_bce_cost`, though, the win is a bit less than a
+clean 50%, because the rewrite adds two small passes of its own:
+
+| | reads + writes |
+|---|---|
+| today: `1-targets` materialised, two `bmm`s, one add | ≈ 2.1 GB |
+| rewritten: one subtract, one `bmm`, one row sum, one broadcast add | ≈ 1.35 GB |
+
+**The contraction itself halves; the cost function as a whole loses roughly a
+third of its memory traffic.** Both statements are worth keeping straight,
+because it is the first one that gets quoted and the second one that you would
+actually measure.
+
+### 10.4 Expected impact: the honest answer is "almost none, here"
+
+Section 7 reports that fused triton loss kernels are now **~69% of all GPU-busy
+time**, and it is tempting to read that as "the mask cost matrices are 69% of the
+work, so halving one of their two contractions is worth ~15% of the GPU". That
+reading is wrong, and checking it is the useful part of this appendix.
+
+Attributing every GPU kernel in the post-fix trace
+(`profile_logs/phase2_postfix_trace.pt.trace.json`) back to the compiled function
+that launched it gives this:
+
+| compiled function | what it is | share of GPU-busy time | per call |
+|---|---|---|---|
+| `mask_bce_loss` — forward | **loss** | **28.2%** | 86.7 ms |
+| `mask_dice_loss` — forward | **loss** | **16.7%** | 51.3 ms |
+| `mask_dice_loss` — backward | **loss** | **14.0%** | 43.4 ms |
+| `mask_bce_loss` — backward | **loss** | **9.3%** | 28.9 ms |
+| **all mask *cost* functions together** | **cost** | **0.22%** | 0.69 ms |
+| — of which the einsum (`aten::bmm`) | | 0.065% | 0.202 ms |
+
+Those four loss kernels sum to 68.2%. **The "~69% of GPU-busy time" is the mask
+losses — forward and backward — not the cost matrices at all.** Every mask cost
+computation in the step together accounts for 0.22%.
+
+Two facts explain that, and both are in the config and the code rather than in
+the trace:
+
+1. **`mask_bce_cost` is switched off in CLIC.** In
+   [`configs/base.yaml`](../../../configs/base.yaml) the mask task lists
+   `mask_bce: 5.0` and `mask_dice: 1.0` under `losses:` (lines 186–188), but
+   under `costs:` (lines 189–191) the BCE line is **commented out** and only
+   `mask_dice: 1.0` survives. The function the rewrite targets is never called in
+   the profiled run. `mask_focal_cost` is not used by CLIC either.
+2. **The cost that *is* used has already been written in the rewritten form.**
+   `mask_dice_cost` (`loss.py:91-113`) is
+
+   ```python
+   numerator   = 2 * torch.einsum("bnc,bmc->bnm", inputs, targets)   # ONE contraction
+   denominator = inputs.sum(-1).unsqueeze(2) + targets.sum(-1).unsqueeze(1)   # cheap row sums
+   return 1 - (numerator + 1) / (denominator + 1)
+   ```
+
+   One contraction, plus two per-row sums that broadcast — structurally identical
+   to what §10.2 produces. Dice has no `A·t + B·(1−t)` pair to collapse, because
+   the Dice score never needed one: its denominator is a sum of independent totals
+   rather than a joint quantity. There is nothing to fold.
+
+So, an honest back-of-envelope for the configuration this study profiled: the
+rewrite would apply to nothing, and if `mask_bce` were re-enabled as a cost it
+would save roughly a third of a function that currently costs 0.22% of GPU-busy
+time — call it **≲0.1%**, which is below the noise of the measurements in §7. It
+is not the lever we thought it was.
+
+**Where it *is* worth doing.** Other experiments in this repository switch the
+affected cost functions on: `trackml` (`tracking.yaml`, `tracking-lite.yaml`,
+`queryPE-lite.yaml`, `tracking-strip.yaml` all use `mask_focal` and/or
+`mask_bce` as costs), `itk/configs/tracking.yaml`, `tide/configs/base.yaml` and
+`pixel.yaml`, and `atlas_muon/config/muon_tracking.yaml`. Those detectors also
+have far more constituents per event than CLIC's 160 hits, and the traffic scales
+linearly with that axis. The rewrite lives in shared code, so doing it once helps
+all of them — it is simply not a CLIC speedup.
+
+**And the lead this actually turned up.** Put the two measured numbers side by
+side: the dice-cost contraction moves ~577 MB in 0.202 ms (~2.9 TB/s), while the
+`mask_bce_loss` kernel next door takes **86.7 ms** to reduce tensors of the same
+order (at most ~0.6 GB of input) — an effective ~7 GB/s, about **400× slower per
+byte than what the same GPU is demonstrably doing in the same trace**. That is
+not an algebra problem; the loss is already about as simple as arithmetic gets.
+It points at how the kernel was generated: the trace records it launching a grid
+of 3.2 million 128-thread blocks at 38% occupancy, and these loss functions are
+compiled with `torch.compile(..., dynamic=True)` (`loss.py:362-370`), which asks
+the compiler to emit one kernel valid for *every* shape and therefore forbids it
+from specialising on the ones we actually use. Before anyone spends effort on
+saving a third of 0.22%, it is worth finding out what those four kernels are
+doing with their 68%.
+
+Two caveats on that lead, in the spirit of §7's fix 5. This trace runs in eager
+mode with profiler overhead, so the absolute milliseconds are not production
+numbers — only the ratio between two kernels measured in the *same* trace is
+solid. And "the grid looks wrong" is a hypothesis, not a finding: it needs a
+direct measurement (compile the same loss with `dynamic=False`, or hand-write the
+reduction, and time it) before it is anything more than the next thing to check.
+That is exactly the mistake §7 documents making about NUMA.
+
+### 10.5 The catch: exact is not the same as bit-identical
+
+Section 8 draws a careful line between two standards of correctness, and this
+rewrite sits on the wrong side of both of them.
+
+Floating-point addition is **not associative**: `(a + b) + c` and `a + (b + c)`
+can differ in the last bits, because each addition rounds to the nearest
+representable number. The two routes through the identity add up genuinely
+different intermediate quantities — in the §10.2 worked example, the current code
+computes `0.30 + 0.07` while the rewrite computes `−3.80 + 4.17`. Both are 0.37 in
+exact arithmetic; in fp32 over 160 hits they will differ somewhere around the
+seventh significant digit.
+
+There is a second, more interesting numerical wrinkle, and it is worth flagging
+because it is not merely a last-bit issue. The rewrite computes the answer as a
+**difference of two larger numbers**. In the worked example the answer 0.37 comes
+out as 4.17 − 3.80: about one decimal digit of precision is lost to cancellation.
+In the real problem the imbalance is much stronger — each true particle owns a
+handful of the 160 hits, so `neg.sum(-1)` runs over ~150 non-belonging hits while
+the final cost may be small. The relative error is inflated by roughly
+`neg.sum / cost`. This is still "exact mathematics, inexact arithmetic", but it
+means the deviation is not guaranteed to be at the level of rounding noise, and
+a rewrite of this kind deserves a quick numerical check (compare the two forms in
+float64 on a real batch) before any training run.
+
+Why that matters more than usual here: the cost matrix is not the final answer.
+It is fed to an **argmin** — the Hungarian matcher picks the cheapest assignment.
+Most of the time a perturbation of 1e-7 changes nothing, because the best
+assignment is comfortably the best. But when two assignments are nearly tied, a
+last-bit difference can flip which one is chosen, and from there the model trains
+against a slightly different target for that event.
+
+That is not necessarily *bad* — a near-tie means the two assignments are almost
+equally good by our own cost function, so the loss barely changes either way, and
+the earlier fixes (a different solver, §8) already accept exactly this kind of
+tie-breaking freedom. But notice the difference. For fix 3 we could *prove* the
+assignment was equally optimal, because two exact solvers minimising the same
+matrix must return equal-cost answers. Here the matrix itself is (very slightly)
+different, so there is nothing to prove: the argument has to be empirical.
+
+Hence the requirement recorded in §7: **a loss-curve comparison**. Run the same
+configuration, same seed, same data, with and without the rewrite, for enough
+steps to be meaningful, and overlay the training and validation loss curves. If
+they lie on top of each other, the change is behaving as intended. That is a
+weaker and much more expensive form of evidence than everything else kept in this
+study — the other fixes were verified in minutes on a login node against a
+556-event equivalence check (§8), whereas this one needs GPU-hours and a
+judgement call about what "on top of each other" means.
+
+That asymmetry is the whole reason the candidate was left on hold, and it is a
+generalisable rule for performance work: **the cost of a change is not just the
+cost of writing it, it is the cost of proving it did not break anything.** A
+rewrite that preserves bit-identical output is nearly free to accept. A rewrite
+that is only mathematically exact buys you the same speed for a much larger
+verification bill — and if, as here, the speed turns out to be ≲0.1%, the bill is
+the entire story.
+
+---
+
+## 11. The real find: a broadcasting bug in the mask losses
+
+Everything above was about making the step *faster*. This one is about the discovery
+that the step was slow because it was computing the **wrong thing** — and it is the
+most important part of the study, because it is the only part that turned out to be a
+correctness bug rather than a tuning exercise.
+
+It is also the part that most undermines the rest of the document: §7's carefully
+measured percentages were all measured against a loss that was doing 2048× too much
+work. They are not wrong as measurements; they are answers to a question that was
+built on a broken premise.
+
+The fix has now been trained and evaluated end to end — §11.7 has the results.
+
+### 11.1 What a "broadcast" is, and how it bites
+
+NumPy and PyTorch let you multiply arrays of *different* shapes by silently
+stretching the smaller one. Multiplying a `[100, 5]` table by a `[1, 5]` row
+applies that row to all 100 lines. That is broadcasting, it is enormously
+convenient, and it is dangerous for exactly one reason: **it never raises an
+error when it does something you did not intend.** If the shapes happen to line
+up, the operation succeeds — just not with the meaning you had in mind.
+
+The rule is that shapes are aligned **from the right**, and any axis of length 1
+is stretched. That right-alignment is what makes the bug below possible.
+
+### 11.2 How we found it: two confident hypotheses, both wrong, and an error message
+
+The discovery is worth recounting, because the reasoning that *nearly* found it was
+wrong twice, and what actually found it was arithmetic on an out-of-memory message.
+
+**The lead.** After the four matcher fixes, the post-fix trace (§7) said four Triton
+loss kernels were **67.8% of everything the GPU did**. §10.4 then noticed something
+that should have been alarming: `mask_bce_loss`'s forward appeared to move bytes about
+**400× less efficiently** than a `bmm` measured *in the same trace on the same GPU*.
+Two kernels, one device, three orders of magnitude apart. Something was wrong, but the
+natural reading was "Inductor generated a bad kernel".
+
+**Two hypotheses, both plausible, both testable.**
+
+- **H1 — `dynamic=True`.** The losses are wrapped in `torch.compile(fn, dynamic=True)`.
+  That flag tells Inductor not to specialise on fixed sizes, which can stop it from
+  emitting a tight kernel for the fixed 160-long reduction axis.
+- **H2 — a hidden synchronisation.** `pred_logits[object_valid_mask]` has an output
+  shape that depends on the *data*, so PyTorch must run `nonzero()` and stall the CPU
+  until the GPU reports how many elements survived. A profiler can easily bill that
+  stall to the kernel next to it.
+
+Both were checked directly (`bench_loss_kernels.py`, job 38463563). **Both mechanisms
+are real. Neither is the cause.** `dynamic=False` really is ~1.5× faster per call — but
+it recompiles on *every* step once `N_valid` moves, at ~3.9 s of compilation per step,
+which is catastrophically worse end to end. The sync really does fire — confirmed with
+`torch.cuda.set_sync_debug_mode("error")`, three times in BCE and twice in dice — but it
+costs about 1 ms against an 88.73 ms call. Two good hypotheses, two real effects, and
+together they explained almost none of the gap.
+
+**What actually found it.** The benchmark ran the same loss in eager mode as a control,
+and eager *crashed*:
+
+```
+torch.OutOfMemoryError: Tried to allocate 62.53 GiB
+```
+
+That number is the whole discovery. Nothing in the intended computation is anywhere
+near 62 GiB — the honest tensors here are ~100–300 MB. So the question stopped being
+"why is this kernel slow" and became "what is 62.53 GiB?" And it factors exactly:
+
+```
+2048 × 102,448 × 160 × 2 bytes (bf16) = 62.5293 GiB
+ ^        ^        ^
+batch  N_valid  constituents
+```
+
+A `batch` that had no business being there. Once you have that shape, the profiler data
+that had been sitting in the trace all along confirms it independently: the forward BCE
+kernel launched 3,218,560 / 3,231,968 / 3,273,984 blocks on the three profiled steps,
+and `batch × N_valid / 64` for the three known `N_valid` values reproduces all three
+numbers **exactly**. A four-line toy at `B, N, C = 3, 4, 5` then printed the offending
+intermediate as `[3, 6, 5]` where `[6, 5]` was intended, and showed the returned loss
+value was wrong too.
+
+**The transferable lessons.** Three:
+
+1. **We had been optimising a kernel instead of questioning it.** The study spent weeks
+   treating "the loss kernels are 69% of GPU time" as a fact about memory-bound
+   reductions and reasoning about how to make them cheaper — §10 is an entire appendix
+   of algebra devoted to shaving reads off a computation that should never have been
+   that size. When a component is surprisingly expensive, check *what it computes*
+   before optimising *how fast it computes it*.
+2. **The 400× anomaly was the real signal and it was under-weighted.** It was recorded
+   in §10.4 as a curiosity, and the follow-up was framed as "why is codegen bad" rather
+   than "a 400× gap is not a codegen problem". Codegen does not cost you 400×; only
+   doing 400× more work does. (The final accounting made it worse still — nearer 5900×,
+   *entirely* work amplification.)
+3. **Crashes are data.** The OOM was initially just an inconvenience in a control arm.
+   Its exact figure identified the bug faster than any of the deliberate instrumentation.
+
+### 11.3 The bug
+
+Our mask losses receive three things:
+
+- `pred_logits`, `targets` — shape `[event, object, constituent]`, e.g.
+  `[2048, 150, 160]`: for each of 2048 events, for each of 150 candidate
+  particles, a score for each of up to 160 detector hits.
+- `object_valid_mask` — `[event, object]`: which of the 150 slots are real particles.
+- `input_pad_mask` — `[event, constituent]`: which of the 160 hit slots are real hits.
+
+Real events have different numbers of hits. We pad every event out to 160 so they
+fit in one rectangular tensor, and `input_pad_mask` records which entries are
+padding. In our CLIC data the true count is **67 ± 27 hits, ranging from 1 to 159**
+— remember that spread, it is what makes this bug matter.
+
+The code (`loss.py`, `mask_bce_loss`) did this:
+
+```python
+pred_logits = pred_logits[object_valid_mask]    # [2048,150,160] -> [N_valid,160]
+loss = F.binary_cross_entropy_with_logits(...)  #                   [N_valid,160]
+loss = loss * input_pad_mask.unsqueeze(1)       # [N_valid,160] * [2048,1,160] = ???
+```
+
+The first line is the trap. Indexing with a 2-D boolean mask **flattens the two
+indexed axes into one**: the event axis and the object axis merge into a single
+list of "all valid objects from all events", `N_valid ≈ 100,000` of them. The
+tensor went from rank 3 to rank 2, and the information about *which event each
+object came from* is now gone from the shape.
+
+The third line still assumes rank 3. `input_pad_mask.unsqueeze(1)` is
+`[2048, 1, 160]`. Aligning from the right against `[N_valid, 160]`:
+
+```
+loss              (rank 2):        [N_valid, 160]   ->  [1, N_valid, 160]
+input_pad_mask    (rank 3):  [2048,       1, 160]
+                             ----------------------
+result:                      [2048, N_valid, 160]
+```
+
+No error. Just a tensor **2048× bigger than intended**, in which *every object is
+paired with every event's padding mask*. It is 62 GB in single precision, which
+is why the loss kernels looked like they dominated the GPU: they were doing
+2048× more work than the physics required.
+
+### 11.4 What it did to the physics
+
+The padding entries themselves contribute exactly zero (padded hits carry a
+hugely negative logit against a zero target, so their loss is ~0). So nothing
+fictitious leaks in. What changes is the **weighting**.
+
+Intended: each object's loss is divided by the number of real hits *in its own
+event*, so every particle contributes equally regardless of how busy its event was.
+
+Actual: each object's loss is divided by a blend of *all 2048 events'* hit counts.
+The practical consequence, measured on real data:
+
+| an object in an event with... | intended total weight | actual |
+|---|---|---|
+| 20 hits | 1.00 | 0.35 |
+| 40 hits | 1.00 | 0.66 |
+| 60 hits | 1.00 | 0.86 |
+
+**Sparse, low-multiplicity events were systematically under-trained.** The
+measured effect on the training signal: the BCE loss came out 11.5% low, the dice
+loss up to ~3× high late in training, and — the number that matters — the
+**gradient pointed about 26° away** from where the intended loss would have sent
+it (cosine similarity 0.90, consistently, batch after batch).
+
+That last number is the whole argument for why this is not merely an efficiency
+bug. A loss that is wrong by a constant factor trains identically; a loss whose
+*gradient points somewhere else* trains to a different model.
+
+Full measurements: [`LOSS_BUG_ANALYSIS.md`](LOSS_BUG_ANALYSIS.md).
+
+### 11.5 Why nobody caught it
+
+Three reasons worth internalising, because they generalise:
+
+1. **Broadcasting fails silently.** Had the shapes been incompatible, this would
+   have crashed on day one in 2025.
+2. **It is invisible when padding is uniform.** If every event had the same number
+   of hits, averaging over all events' masks equals using your own — the bug is a
+   perfect no-op. Our verification test confirms legacy and fixed agree to
+   *exactly* zero in that case. It only bites because real events vary.
+3. **The oversized tensor looked like an expected cost** — see §11.2, which is the
+   detailed version of this failure: the study treated "the loss kernels are 69% of
+   GPU time" as a fact to optimise around rather than a claim to check.
+
+### 11.6 The fix, and how to undo it
+
+The fix keeps the tensor at rank 3 throughout, so the padding mask lines up with
+the event axis the way it was always meant to. It is deliberately built to be
+**reversible with a one-line config change**:
+
+- `loss.py` gains two *new* functions, `mask_bce_loss_v2` and `mask_dice_loss_v2`,
+  registered under the new names `mask_bce_v2` / `mask_dice_v2`. **The legacy
+  functions are byte-for-byte untouched**, and remain the default. Nothing in the
+  repository changes behaviour unless a config explicitly asks for the new names.
+- `configs/clic_v6_maskfix.yaml` is a copy of `base.yaml` differing in exactly
+  three lines: the run name, and the two loss keys. `configs/clic_v7_maskfix.yaml`
+  is the same edit against `clic_v7.yaml`.
+
+**To revert to the published behaviour: use `base.yaml` instead of
+`clic_v6_maskfix.yaml`.** That is the entire revert. This is why the fix was not
+applied in place — the legacy path *is* the paper's path, and it needs to stay
+runnable and unambiguous.
+
+Correctness was verified against an explicit per-event Python loop (agreement to
+1e-9 in float64 for both losses), plus two structural checks: with uniform padding
+the fixed and legacy versions agree exactly, and with no masks at all they are
+identical. Script: [`verify_mask_loss_v2.py`](verify_mask_loss_v2.py).
+
+### 11.7 What the A/B actually measured
+
+A corrected-loss model **has** now been trained: job 38469247, 3× L4, batch 256/GPU,
+200 epochs, using `clic_v6_maskfix.yaml`. Its counterpart is the June v6 run
+(`clic_v6_20260605-T113014`) — same config, same hardware, same batch, same epoch
+count, differing only in the loss. Three results.
+
+**Speed: +25.4%, and it is the biggest single win in the whole study.** 1.81 → 2.27
+it/s; 39 h 46 m → 31 h 55 m for 200 epochs. Splitting it against the matcher-fixes-only
+rerun on the same geometry: the four matcher fixes of §7 bought 1.81 → 1.93 (+6.6%),
+and the mask fix alone bought 1.93 → 2.27 (**+17.6%**). On the production L4 config the
+mask fix is worth roughly **2.7× all four matcher fixes combined** — the reverse of
+their ranking on the B200 protocol, because at batch 256 the cost matrices are 8×
+smaller while the loss kernels are not.
+
+**Physics: no detectable change.** Jet-E response was evaluated exactly as the
+`glow_jet_iqr` study does, with a bootstrap over matched jets:
+
+| branch | IQR @ 160–180 GeV (fixed − legacy) | rise, 20-40 → 160-180 GeV |
+|---|---|---|
+| `mpflow` | +0.0048 ± 0.0043 (z = +1.10) | +0.0035 ± 0.0049 (z = +0.72) |
+| `mpflow_proxy` | −0.0052 ± 0.0028 (z = −1.86) | −0.0033 ± 0.0035 (z = −0.94) |
+
+Every |z| < 2, **and the two output branches disagree on the sign** — so the differences
+are sampling and branch-choice noise, not physics. Note what this does *not* say: it
+does not say the gradient rotation of §11.4 was imaginary. It says a 26° rotation of the
+mask-loss gradient, sustained over 200 epochs, lands the model somewhere that jet-level
+metrics cannot distinguish. Those are different claims.
+
+**The rising-IQR trend survives the fix**: both runs rise ~+0.032 (`mpflow`) while
+Pandora falls. This settles a question the `glow_jet_iqr` study could previously only
+argue indirectly — the bug is **not** the cause of that regression, now demonstrated by
+training an arm without it rather than by reasoning about which commits contained it.
+
+**Quality: mildly better, never worse.** Scoring *both* checkpoints under the *same*
+(corrected) objective — the only way to compare two models trained on different losses —
+gives mask purity +0.98%, mask exact match +1.68%, dice −2.37%, η residual −2.58%, while
+event-level efficiency and purity are flat (−0.04% / −0.19%).
+
+**Verdict: keep the fix.** Substantially faster, physics-neutral, mildly better masks.
+
+### 11.8 What is still not known
+
+- **Whether the corrected loss is better *as an objective*.** Everything above says it
+  is not *worse*, and that it is much cheaper. It does not demonstrate that training on
+  the intended loss produces a better detector reconstruction — the honest summary is
+  that the distortion mattered far less to the physics than to the compute bill.
+- **The B200 numbers are not re-baselined.** Every percentage in §7 was measured against
+  the buggy loss, i.e. against a 2048× oversized tensor. Paired B200 runs were submitted
+  on 2026-08-03 to fix this (see NOTES.md); until they report, treat §7's progression as
+  a record of what was measured at the time, not as current fact.
+- **`mask_focal_loss` and `mask_kl_div_loss` still have the bug.** They are unused by any
+  CLIC config, but the other `ObjectHitMaskTask` experiments (trackml, itk, tide, cld,
+  colliderml, atlas_muon) are affected identically and have not been examined.
+- **The fix is still opt-in.** Making it the default is a deliberate decision that breaks
+  comparability with every existing checkpoint and with the published numbers.

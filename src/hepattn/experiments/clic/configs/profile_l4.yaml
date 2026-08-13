@@ -1,0 +1,17 @@
+# Throwaway profiling overlay for the 3x L4 head-to-head rerun.
+# Layer as: --config configs/base.yaml --config configs/profile.yaml --config configs/profile_l4.yaml
+# (with --trainer.devices=3), i.e. it only changes what has to change vs. the B200
+# protocol: the per-GPU batch size and the step budget.
+#
+# - batch_size 256/GPU is the June 2026 L4 geometry (24 GB VRAM cannot hold 2048).
+#   Global batch = 3 x 256 = 768, as in job 33954040.
+# - max_steps 800 instead of 200: L4 steps are ~8x cheaper, so 200 steps would be
+#   almost all torch.compile warmup. 800 steps is ~7 min at the June rate of 1.81 it/s
+#   and leaves a long steady-state tail to read the throughput off.
+#
+# Do NOT use for real training runs. See studies/b200_utilization/profiling/NOTES.md.
+data:
+  batch_size: 256
+
+trainer:
+  max_steps: 800
