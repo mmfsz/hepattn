@@ -200,14 +200,24 @@ Design notes:
 
 Six steps, in order, each gating the next.
 
-### Phase 0 — size the prize (GATE)
+### Phase 0 — size the prize (GATE) — **SUBMITTED** (job 39401280, 2026-08-14)
 
-One profiling job on B200 with the current mask-fixed config, instrumented to attribute the
-step's wall clock to (a) matcher DtoH, (b) matcher solve, (c) everything else. Reuse the
-Phase-2/3 protocol in [`../profiling/README.md`](../profiling/README.md) and
-[`../profiling/analyze_trace.py`](../profiling/analyze_trace.py); add explicit
-`torch.cuda.synchronize()`-bracketed timers around `Matcher.forward` since the profiler's idle
-attribution alone will not separate the matcher from other host work.
+One job on B200 with the current mask-fixed config, attributing the step's wall clock to
+(a) matcher device→host copy, (b) matcher solve, (c) device-side prep, (d) everything else.
+
+`hepattn.callbacks.MatcherTimer` does the attribution, driven by
+[`../../../configs/profile_phase0.yaml`](../../../configs/profile_phase0.yaml) and submitted
+with [`submit_phase0_matcher_share_b200.sh`](submit_phase0_matcher_share_b200.sh). It uses
+explicit `torch.cuda.synchronize()`-bracketed timers, because the profiler's idle attribution
+lumps the matcher in with every other host cost in the step. The leading sync on entry to
+`Matcher.forward` is the load-bearing part: without it, the host path's first blocking
+operation is charged for all the GPU work queued earlier in the step.
+
+**This does *not* reuse the Phase-2/3 trace protocol**, contrary to the original sketch here.
+That protocol runs eager with `Compile` removed, under `PyTorchProfiler` — which inflates the
+host side, and the host side is the thing being measured. Phase 0 runs production settings
+instead: compiled, no profiler, batch 2048, 90 steps with 40 discarded as warmup. See
+[`NOTES.md`](NOTES.md) for the bucket definitions and the instrumentation's own cost.
 
 - **Go** if the matcher owns ≳20% of B200 step time.
 - **Reconsider** at 10–20% — the ceiling is small but the CPU-core saving may still justify it.
@@ -340,10 +350,12 @@ Written down now, before any measurement, so they cannot drift:
 | file | purpose |
 |---|---|
 | `README.md` | this plan |
-| `NOTES.md` | chronological running log — created when Phase 0 starts |
+| `NOTES.md` | chronological running log — what was actually measured |
+| `submit_phase0_matcher_share_b200.sh` | Phase 0 gate: the matcher's share of a B200 step |
 | `bench_device_matcher.py` | Phase 1 offline correctness + speed benchmark |
 | `submit_bench_device_matcher.sh` | Phase 1 on one B200 |
 | `submit_paired_device_matcher_b200.sh` | Phase 3 paired A/B, both arms in one allocation |
+| `phase0_logs/` | Phase 0 outputs, stamped with the SLURM job id |
 
 And what it touches outside this directory:
 
@@ -351,5 +363,7 @@ And what it touches outside this directory:
 |---|---|
 | `src/hepattn/models/device_lap.py` | the batched auction solver and the permutation builder |
 | `src/hepattn/models/matcher.py` | `DEVICE_SOLVERS`, the `device_solver*` config keys, `_match_on_device` |
+| `src/hepattn/callbacks/matcher_timer.py` | `MatcherTimer` — the Phase-0 sync-bracketed attribution |
+| `src/hepattn/experiments/clic/configs/profile_phase0.yaml` | Phase 0 overlay: production settings, no profiler |
 | `tests/matching/test_device_solver.py` | exactness vs scipy, CPU and (marked) GPU |
 | `src/hepattn/experiments/clic/configs/clic_v6_cudamatch.yaml` | Phase 3 arm B — `clic_v6_maskfix.yaml` with the matcher block swapped |
