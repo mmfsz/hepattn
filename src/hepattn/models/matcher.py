@@ -333,16 +333,25 @@ class Matcher(nn.Module):
         if not costs_t.is_cuda:
             return costs_t.numpy(), lengths_np
 
-        # Stage the copy through a cached pinned buffer: a device->pageable memcpy of the
-        # cost tensor is several times slower than device->pinned, and profiling showed it
-        # dominating the matcher cost. Grow-only so allocation (expensive for pinned
-        # memory) happens rarely.
+        return self._stage_to_host(costs_t), lengths_np
+
+    def _stage_to_host(self, costs_t: torch.Tensor) -> np.ndarray:
+        """Copy a prepared device cost tensor to the host, staged through a pinned buffer.
+
+        A device->pageable memcpy of the cost tensor is several times slower than
+        device->pinned, and profiling showed it dominating the matcher cost. The buffer is
+        cached and grow-only, so allocation (expensive for pinned memory) happens rarely.
+
+        Kept as its own method because it is the single transfer the device solver exists to
+        remove, which makes it the thing to put a timer around; see
+        :class:`hepattn.callbacks.MatcherTimer`.
+        """
         n = costs_t.numel()
         if self._pinned_buffer is None or self._pinned_buffer.numel() < n:
             self._pinned_buffer = torch.empty(n, dtype=torch.float32, pin_memory=True)
         staged = self._pinned_buffer[:n].view(costs_t.shape)
         staged.copy_(costs_t)
-        return staged.numpy(), lengths_np
+        return staged.numpy()
 
     def _match_on_device(self, costs, object_valid_mask=None, query_valid_mask=None) -> torch.Tensor:
         """Match without ever leaving the device the costs are on.

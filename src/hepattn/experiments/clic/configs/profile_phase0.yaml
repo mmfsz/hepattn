@@ -1,0 +1,35 @@
+# Phase-0 overlay for the CUDA matching study: how much of a training step does the matcher own?
+# Layer on top of clic_v6_maskfix.yaml (or clic_v6_cudamatch.yaml) via a second --config.
+# See studies/b200_utilization/cuda_matcher/README.md §5, Phase 0. Not for real training.
+#
+# Deliberately NOT the Phase-2/3 profiling protocol. Those traces run eager (Compile removed)
+# under PyTorchProfiler, which inflates the host side -- fine for reading the *composition* of
+# GPU work, useless for a go/no-go gate on a host-side fraction. This runs production settings
+# (compiled, no profiler, batch 2048) and measures the matcher with explicit CUDA syncs, which
+# is the only thing that separates it from the rest of the step's host work.
+#
+# Callbacks list restates base.yaml's minus the prediction writer and checkpointing (nothing
+# here is worth keeping) plus MatcherTimer. Compile stays: the question is about the production
+# step, and compiling the encoder/decoder shrinks the denominator the matcher is measured against.
+trainer:
+  profiler: null
+  max_steps: 90
+  limit_val_batches: 0
+  # No Comet run for a throwaway measurement; log_dir then falls back to default_root_dir,
+  # which is where MatcherTimer writes its npz/json.
+  logger: false
+  default_root_dir: studies/b200_utilization/cuda_matcher/phase0_logs
+
+  callbacks:
+    - class_path: hepattn.callbacks.Compile
+    - class_path: hepattn.callbacks.MatcherTimer
+      init_args:
+        # torch.compile warmup has taken tens of steps on this model; discard well past it.
+        warmup_steps: 40
+        output_name: phase0_matcher_timing
+        print_every: 10
+    - class_path: hepattn.callbacks.SaveConfig
+    - class_path: lightning.pytorch.callbacks.ModelSummary
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+      init_args:
+        refresh_rate: 10
