@@ -1,0 +1,35 @@
+# Phase-1 overlay for the CUDA matching study: snapshot one step's real cost matrices.
+# Layer on top of clic_v6_maskfix.yaml via a second --config.
+# See studies/b200_utilization/cuda_matcher/README.md §5, Phase 1 step 2.
+#
+# The exactness result banked so far is on synthetic uniform costs, which are far better
+# conditioned than the real mask-BCE ones. This job exists only to lift one real cost tensor
+# out of a training step and onto disk, so the auction can be replayed against scipy's float64
+# optimum offline, without holding a B200 slot for every re-run.
+#
+# The callback stops training as soon as the file is written, so max_steps is only a backstop.
+# Compile stays on so the dumped step is a steady-state one; it costs a couple of minutes of
+# warmup and nothing else.
+trainer:
+  profiler: null
+  max_steps: 60
+  limit_val_batches: 0
+  logger: false
+  default_root_dir: studies/b200_utilization/cuda_matcher/phase1_logs
+
+  callbacks:
+    - class_path: hepattn.callbacks.Compile
+    - class_path: hepattn.callbacks.MatcherCostDump
+      init_args:
+        # Past torch.compile warmup, which has taken tens of steps on this model.
+        dump_step: 45
+        output_name: clic_b200_matcher_costs
+        # All 2048 x 5 problems: the study cares about the production geometry, and a
+        # subsample would not exercise the shapes the timing comparison is about.
+        max_problems: null
+        stop_after: true
+    - class_path: hepattn.callbacks.SaveConfig
+    - class_path: lightning.pytorch.callbacks.ModelSummary
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+      init_args:
+        refresh_rate: 10
