@@ -145,9 +145,12 @@ model:
           # this batch size is 69.5% GPU-idle, while the production 3x L4 is 85% GPU-busy and
           # would pay for the solver's kernels without having a stall to remove.
           # See studies/b200_utilization/cuda_matcher/README.md.
-          device_solver: auction
-          # Used only for the problems the auction does not converge on. lap1015_late is not
-          # worth its GIL caveat here, since it should see almost no work.
+          # 'jv' is exact Jonker-Volgenant (Crouse 2016, the algorithm scipy uses), batched
+          # over problems by torch-linear-assignment. It replaced the auction, which was
+          # 350x slower and failed to converge on 21.6% of real cost matrices.
+          device_solver: jv
+          # Never used by 'jv', which cannot fail to converge; kept because the key is
+          # shared with the auction arm. lap1015_late is not worth its GIL caveat here.
           default_solver: scipy
           parallel_solver: false
 
