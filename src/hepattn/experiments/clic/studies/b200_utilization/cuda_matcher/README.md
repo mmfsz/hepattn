@@ -1,18 +1,68 @@
 # CUDA Hungarian matching — study plan
 
-> **Status (2026-08-13): solver implemented and exact on CPU; nothing measured on GPU yet.**
+> **Status (2026-08-27): Phases 0–3 are done. What remains is Phase 4 — physics equivalence —
+> and the L4 arm of Phase 3.** The matcher owns 66.8% of a B200 training step. The auction failed
+> §6's kill criterion on real costs (job 40228586: 89% exact, 21.6% non-convergence, 350× slower).
+> Jonker–Volgenant replaced it and **passed Phase 1 cleanly**: 100% exact in float64 and exact
+> to fp32 rounding in float32 (job 40290161), with a ~180 ms solve that reproduces across
+> nodes. It ships as `device_solver: jv`, off by default. **The paired A/B then passed on B200
+> (jobs 40291275–40291277): the device arm delivers 4231 samples/s and reproduces to 0.8% across
+> three nodes, while the host arm scatters over 32% — which is the host-bound thesis stated as a
+> measurement.** Phase 3's L4 repeat has *not* been run, and the whole opt-in design rests on it.
 >
 > | phase | state |
 > |---|---|
-> | 0 — size the prize on B200 | **not started — this is the gate, see §5** |
-> | 1 — offline correctness | **done on CPU**: exact vs scipy on every synthetic shape, zero fallbacks. GPU + real cost matrices still to run (`submit_bench_device_matcher.sh`) |
-> | 2 — config option | **done**: `Matcher(device_solver="auction")`, default `None`, `tests/matching/test_device_solver.py` (18 pass), full host suite unchanged (118 pass) |
-> | 3 — paired A/B throughput | not started (`submit_paired_device_matcher_b200.sh`) |
-> | 4 — physics equivalence | not started |
+> | 0 — size the prize on B200 | **DONE — GO.** Matcher = **66.8%** of the step, against a ≥20% bar (job 39401280). The prize is the *solve* (63.9%), not the device→host copy (1.3%). See [`NOTES.md`](NOTES.md) |
+> | 1 — offline correctness | **DONE — PASS for JV.** *Auction: NEGATIVE* (job 40228586, real costs): 89.01% exact, 21.6% non-convergence, 350× slower — §6 kill criterion met as written. *JV (`torch-linear-assignment`): POSITIVE* (jobs 40252873, 40290161, same tensor): **100.00% exact in float64, worst excess 0**; in float32, 99.76% exact with the disagreements at 2.8e-09 relative — near-ties an order below fp32 epsilon. Device solve **~180 ms**, reproducible across nodes |
+> | 2 — config option | **DONE.** `device_solver: jv` → `device_lap.batched_jv`, carrying the two load-bearing numerical decisions (`num_rows + 1` for forbidden entries, constant-cost padded rows), a `require_jv()` build check that fails at construction, and a `solved=None` contract that skips the per-call device sync. Tests parametrised over both solvers, green on CPU and on a B200 (job 40290666); `Matcher().device_solver` is still `None` |
+> | 3 — paired A/B throughput | **DONE — PASS on B200** (jobs 40291275, 40291276, 40291277; three nodes, both `ORDER`s, all six arms clean). Device **4231 samples/s** against a host arm of 1358–1790; within-allocation ratios 2.34×/2.77×/3.12×, mean 2.74× = **91% of Phase 0's 3.0× Amdahl ceiling**. The load-bearing observation is not the ratio: **the device arm varies 0.8% across nodes and the host arm 32%**, exactly as "host-bound" predicts, so the ratio is a function of the node the host arm drew and the absolute 4231 samples/s is the honest headline. **Still outstanding: the L4 repeat at batch 256, and the `--cpus-per-task` sensitivity check** |
+> | 4 — physics equivalence | not started; **unblocked** — Phase 3 says deploy, so this now runs at full length |
+>
+> ### Next steps, in order (2026-08-27)
+>
+> 1. **Phase 4 — physics equivalence**, at full length, because Phase 3 said deploy. First
+>    because it is the only remaining question that can still *kill* the change: a throughput win
+>    that moves the loss curves or the jet-E IQR is not a win. Protocol in §5.
+> 2. **Finish Phase 3's two open arms** — the L4 repeat at batch 256
+>    (`submit_maskfix_l4_3gpu.sh` as the template) and the `--cpus-per-task` 16→4 sensitivity
+>    check on the device arm. Second rather than first because neither can kill the B200 result;
+>    but the L4 arm is what the "opt-in" default is *justified* by, so it is not optional before
+>    ship, and a surprise win there would be a bigger result than the B200 one.
+> 3. **The vendoring decision**, now unblocked: §3's objection to this candidate was the
+>    compiled-CUDA dependency, and that objection was made contingent on Phase 3 being worth it.
+>    It is. Last because it is an engineering choice with no measurement attached, and Phase 4
+>    could still make it moot.
+>
+> **One environment trap the A/B script now handles.** The extension is ABI-bound to the pixi
+> env it was built against, and `main.py` trains under the **default** env (torch 2.9.1) while
+> the offline benches run under **clic** (torch 2.10). So there are two builds:
+> `vendor/torch-linear-assignment-default` for training and `vendor/torch-linear-assignment`
+> for the benches. Loading the wrong one fails with `undefined symbol:
+> _ZNK3c1010TensorImpl15incref_pyobjectEv`; neither is a fallback for the other.
+>
+> The open decision, now unblocked by Phase 3 and item 3 above: whether
+> `torch-linear-assignment` gets **vendored into `src/`** as `lap1015` was, or stays an external
+> build at `/blue/avery/m.mazza/projects/fastml/vendor/`. §3's original objection to this whole
+> candidate was the compiled-CUDA dependency. Decide at ship time.
+>
+> **Dead ends — do not re-run.** The auction (§6 kill criterion, job 40228586). The
+> `-march=native` hypothesis (job 40137096 disproved it). The `n_jobs` sweep (job 40138527:
+> 16 is correct). The GIL warning (a false negative on a hand-patched `.so`). The offline
+> host-vs-device *speedup* ratio: it moves with whichever node the host arm lands on (0.405 s,
+> 0.538 s and 1.879 s for the same host call), so 2.25× and 10.5× are the same measurement and
+> neither is the answer Phase 3 is after. **And the *paired* ratio is subject to the same
+> node-dependence** — 2.34×, 2.77× and 3.12× across the three Phase-3 allocations, from a device
+> arm that reproduced to 0.8% — so re-running the A/B in the hope of a cleaner ratio measures
+> the node, not the solver. The ratio has no cleaner value to converge on; the device arm's
+> absolute samples/s does.
 >
 > One result is already banked and is written up in §3: **the textbook epsilon-scaling auction
 > is wrong for the rectangular problems this matcher poses.** It is exact only when
 > `num_rows == num_cols`, and the matcher's problems are ~50 valid targets into 150 query slots.
+>
+> **Read that last clause with care** — it is the mean of the *per-event* particle count, and
+> the crop is a `max` over the batch, so the tensor the solver actually receives at batch 2048
+> is ~146 × 150. See `NOTES.md`, 2026-08-25.
 >
 > This is the follow-up to candidate 6 ("exact GPU LAP solver") that
 > [`../profiling/NOTES.md`](../profiling/NOTES.md) put on hold on 2026-07-31. The hold
@@ -23,7 +73,8 @@
 > **Nothing here should change default behaviour.** The production config is 3× L4, and the
 > L4 is 85% GPU-busy — it has no host stall to reclaim, and moving the solve onto an
 > already-saturated GPU would make it *slower*. The device solver is therefore an opt-in
-> config key that defaults to off.
+> config key that defaults to off. **This remains an expectation, not a measurement**: the L4
+> arm of Phase 3 has not been run.
 
 ## 1. The problem, in numbers
 
@@ -39,7 +90,7 @@ layers plus the final head into **one** matcher call (`maskformer.py:341`):
 | LAP problems per step | 2048 × 5 = **10,240** |
 | size of each problem | up to 150 preds × 150 targets (rectangular after cropping to `max(n_valid_targets)`) |
 | cost tensor | **921.6 MB fp32**, copied device → host every step |
-| CPU solve, 16 threads | 0.23 s (`lap1015_late`) / 0.27 s (`scipy`) |
+| CPU solve, 16 threads | 0.23 s (`lap1015_late`) / 0.27 s (`scipy`) standalone — but **712.8–783.3 ms measured inside a real training step** (Phase 0 and job 40138527), where the same 16 cores also feed 16 dataloader workers. `n_jobs=16` is the right setting: it is 7.1× a single thread and 1.14× eight |
 | CPU threads needed | 16 (`--cpus-per-task=16`; measured to saturate there) |
 
 And the hardware split after the mask-loss fix (Phase 3, jobs 38598205 / 38598206):
@@ -70,6 +121,10 @@ solver and close to the worst case for a CPU one:
 The win is not just the 0.23 s of solve: it is the 921.6 MB DtoH, the `cudaStreamSynchronize`
 that the host stall forces, and the 16-core CPU request that goes with it.
 
+> **Superseded by Phase 0 (2026-08-15).** The DtoH is **1.3% of the step**, and deleting it
+> outright would be invisible. The win is the solve and nothing else: 63.9% of the step. Read
+> the paragraph above as the reason this study was opened, not as a description of the prize.
+
 ## 2. Honest expected size of the prize
 
 **We do not yet know what fraction of the B200's 69.5% idle is the matcher**, and this is the
@@ -83,14 +138,27 @@ So: **Phase 0 below is a gate, not a formality.** A perfect device solver caps o
 fraction of the step the matcher actually owns. If that is 10%, this study is not worth
 finishing.
 
+> **Answered, 2026-08-15: 66.8%.** A free device solver would leave a ~372 ms step, i.e. a
+> **3.0× throughput ceiling**; one costing 100 ms still leaves 2.4×. This is against a properly
+> threaded host solver: a GIL warning in the same log briefly suggested otherwise, but a
+> single-allocation sweep (job 40138527) showed a serialised solve costs 5595.7 ms against the
+> 712.8 ms measured, so the host arm was threaded all along. See [`NOTES.md`](NOTES.md).
+
 ## 3. Algorithm choice
 
 | option | exact? | new dependency | verdict |
 |---|---|---|---|
-| **Batched auction with ε-scaling, pure PyTorch** | ε-optimal; exact when ε < 1/n on suitably scaled costs | **none** | **first choice** |
+| **Batched auction with ε-scaling, pure PyTorch** | ε-optimal; exact when ε < 1/n on suitably scaled costs | **none** | ~~first choice~~ — **implemented, and pseudo-polynomial: rounds ∝ C/ε, so cost depends on the matrix *values*. Collapses at the production crop (`NOTES.md`, 2026-08-25)** |
 | Batched auction in Triton | same | none (triton 3.5.1 already in the env) | fallback if the torch version is kernel-launch-bound |
-| Batched Jonker–Volgenant (`torch-linear-assignment`) | exact | yes — pip package, CUDA build, arch-fragile | second choice; the dependency was the original objection to this whole candidate |
+| Batched Jonker–Volgenant (`torch-linear-assignment`) | exact | yes — pip package, CUDA build, arch-fragile | ~~second choice~~ — **now the recommended path.** Implements Crouse (2016), the same algorithm scipy uses; natively rectangular; strongly polynomial, so immune to both the aspect ratio and cost degeneracy. Builds here (`NOTES.md`, 2026-08-25) |
+| Batched Hungarian, CUDA (HyLAC, MIT) | exact | yes — C++/CUDA, no Python API | fallback if the above underperforms: its "stream-solver" (one thread block per small LAP) is this workload verbatim, 22.59× over prior work, but square-only in its docs |
 | Sinkhorn / soft assignment | **no** | none | **rejected** — an approximation that changes the training objective. The profiling study's standing rule is *no approximations in the computations*. |
+
+> **Superseded, 2026-08-25.** The rationale below weighs "naturally batched and data-parallel"
+> as the deciding factor. That is the right criterion for **one** large LAP; this workload is
+> **10,240 independent** ones, where inter-problem parallelism is already ample and the
+> auction's intra-problem parallelism buys nothing — in exchange for giving up strong
+> polynomiality. See `NOTES.md`, 2026-08-25, and the GPU LAP literature in §8.
 
 **Recommendation: pure-PyTorch batched auction with ε-scaling.** Rationale:
 
@@ -200,7 +268,7 @@ Design notes:
 
 Six steps, in order, each gating the next.
 
-### Phase 0 — size the prize (GATE) — **SUBMITTED** (job 39401280, 2026-08-14)
+### Phase 0 — size the prize (GATE) — **DONE, GO** (job 39401280, ran 2026-08-15)
 
 One job on B200 with the current mask-fixed config, attributing the step's wall clock to
 (a) matcher device→host copy, (b) matcher solve, (c) device-side prep, (d) everything else.
@@ -222,6 +290,11 @@ instead: compiled, no profiler, batch 2048, 90 steps with 40 discarded as warmup
 - **Go** if the matcher owns ≳20% of B200 step time.
 - **Reconsider** at 10–20% — the ceiling is small but the CPU-core saving may still justify it.
 - **Kill** below 10%, and record that in `NOTES.md` as the answer to candidate 6.
+
+**Result: 66.8%** — matcher 745.6 ms of a 1116.2 ms step, of which the host solve is 712.8 ms
+(63.9%) and the device→host copy only 14.9 ms (1.3%). Go. The full attribution, the Amdahl
+ceiling, and the GIL caveat that makes the host arm a degraded baseline are in
+[`NOTES.md`](NOTES.md).
 
 ### Phase 1 — offline solver, correctness first (no training)
 
@@ -258,7 +331,7 @@ Deliverable: a table of (exactness pass rate, fallback rate, speedup) per config
 Still to do: a 20-step smoke run on B200 asserting the per-step losses match the host path to
 within fp32 noise, plus the `gpu`-marked tests.
 
-### Phase 3 — paired throughput A/B
+### Phase 3 — paired throughput A/B — **DONE on B200, PASS; L4 arm NOT RUN**
 
 `device_solver` is a single config key, so the study's existing paired-run trick applies
 directly. [`submit_paired_device_matcher_b200.sh`](submit_paired_device_matcher_b200.sh) runs
@@ -272,10 +345,26 @@ This is the only way to avoid the node-to-node confound — the B200 throughput 
 - Parse with [`../profiling/parse_throughput.py`](../profiling/parse_throughput.py) `--batch 2048`.
 - **Repeat on 3× L4** at batch 256 with `submit_maskfix_l4_3gpu.sh` as the template. The
   expectation is neutral-to-slightly-negative; this is what justifies "opt-in", and a surprise
-  win there would be a much bigger result than the B200 one.
+  win there would be a much bigger result than the B200 one. **NOT RUN as of 2026-08-27** — and
+  it is the third of §6's three ship conditions, so it is an open item rather than a formality.
 
 Also record `--cpus-per-task` sensitivity: if the device path works, arm B should be
 insensitive to dropping from 16 cores to 4, which is a real scheduling win on top of throughput.
+**Also not done**: none of the three Phase-3 allocations varied the core count.
+
+**Result (B200), 2026-08-27** — jobs 40291275 / 40291276 / 40291277, three nodes, both `ORDER`s,
+all six arms clean (no solver warnings, no host fallbacks, 300 steps reached):
+
+| arm | samples/s across the three nodes | spread |
+|---|---|---|
+| host | 1790 / 1528 / 1358 | **32%** |
+| **device** | 4197 / 4231 / 4231 | **0.8%** |
+
+Within-allocation ratios 2.34×, 2.77×, 3.12×; mean 2.74×, which is 91% of Phase 0's 3.0× Amdahl
+ceiling. The device arm wins in both orders. **The node-invariance of the device arm against the
+32% scatter of the host arm is the load-bearing observation** — it is the host-bound thesis
+stated as a measurement — and it also means the ratio is not a stable quantity. Quote the
+absolute 4231 samples/s. Full write-up in [`NOTES.md`](NOTES.md), 2026-08-27.
 
 ### Phase 4 — physics equivalence
 
@@ -299,6 +388,19 @@ Written down now, before any measurement, so they cannot drift:
 | **Ship as opt-in anyway** | exact, ≥ 10% on B200, but a measurable L4 regression — this is the expected outcome and the reason for the config key |
 | **Kill** | Phase 0 shows the matcher owns < 10% of the B200 step |
 | **Kill** | assignment cost differs from scipy, or the fallback rate is high enough that the CPU path dominates anyway |
+
+> **TRIGGERED 2026-08-25 for `device_solver: auction`** (job 40228586): 89.01% exact against a
+> required 100%, and a 21.6% fallback rate against a required < 0.1%. Applied as written. The
+> criteria are left unchanged here so that the next solver is judged by the same bar.
+
+> **PARTIALLY MET 2026-08-27 for `device_solver: jv`**, against the same bar. *Exactness*: met —
+> 100.00% exact against scipy in float64, worst excess 0, zero fallbacks against a required
+> < 0.1% (job 40290161). *B200 throughput*: met, with a very large margin — 4231 against 1358–1790
+> samples/s, i.e. +134% to +212% against a required ≥ 10% (jobs 40291275–40291277). *L4
+> regression*: **untested** — the Phase-3 L4 repeat has not been run, so the third condition is
+> neither met nor failed and the "Ship" row is not yet satisfied as written. On the evidence so
+> far the outcome is at worst the "Ship as opt-in anyway" row, which is what §4 already builds.
+> The criteria themselves are again left unchanged.
 
 ## 7. Known risks
 
@@ -334,18 +436,72 @@ Written down now, before any measurement, so they cannot drift:
    Rounds scale roughly with 1/ε and with how competitive the problem is. Real costs could be
    much worse than uniform random ones, and a solver that needs 10× the rounds is a slower
    host path with extra steps. Phase 1 on real matrices settles it.
+8. **The auction collapses on square problems, and the crop is what decides squareness.**
+   **CONFIRMED, 2026-08-15** (job 40078074, synthetic, B200). The speedup is not a property of
+   the solver but of the *aspect ratio* of the problem it is given:
 
-## 8. Operational notes
+   | shape | device vs host |
+   |---|---|
+   | 10,240 × 150 preds × 50 targets — *(mislabelled "the production geometry"; it is not)* | **6.4× faster** |
+   | 1,024 × 150 × 50 | 8.9× faster |
+   | 1,024 × 50 × 50 (square) | 7× **slower** |
+   | 1,024 × 150 × 150 (square) | 36× **slower** |
+   | 10,240 × 150 × 150 (square, production batch) — **the closest row to production** | **107× slower — 213 s per call, 6 non-convergences** |
+
+   The mechanism is the auction's: with 150 slots for 50 bidders there is slack, and rounds
+   converge almost immediately; at 150-into-150 every bidder contends for every seat and the
+   price war runs long. Exactness holds throughout (≥99.8%, worst excess 1.2e-7, zero
+   fallbacks) — this is a *speed* cliff, not a correctness one.
+
+   Why this is a live risk and not a curiosity: `_prepare_costs` crops the target axis to
+   `max(num_valid_targets)` **over the batch**, so a single dense event drags all 10,240
+   problems toward square. **MEASURED 2026-08-25 and it is worse than "a live risk": the median
+   crop at batch 2048 is 146 against 150 queries, and the lowest in 200 draws was 141**
+   (`crop_distribution.py`). CLIC averages ~50 targets, but the tail is what sets the crop, and
+   the penalty for landing there is 200×, not 2× — a 1.1 s step becomes a 213 s one, which
+   presents as a hung run rather than a slow one. The square production row is also the only
+   case in the sweep the auction failed to converge on (6 fallbacks), so `max_iters` is doing
+   real work there rather than merely being generous.
+
+   **A guard is therefore a precondition for deploying this, not a refinement**: measure the
+   distribution of `max_targets` per batch — the dumped tensor's manifest (`targets_max`)
+   reports it — and route batches whose crop approaches `num_queries` back to the host.
+
+## 8. Related work
+
+Absent from this plan until 2026-08-25, which is why the auction's failure mode arrived as a
+surprise rather than a prediction. GPU LAP is a mature literature.
+
+- Bertsekas, *Auction Algorithms* — the auction is pseudo-polynomial without ε-scaling;
+  bidding rounds go as `C/ε`. With scaling, `O(nm log(nC))`.
+  <https://web.mit.edu/dimitrib/www/Auction_Encycl.pdf>
+- Crouse, *On implementing 2D rectangular assignment algorithms*, IEEE TAES 52(4), 2016 —
+  the algorithm behind `scipy.optimize.linear_sum_assignment` and behind
+  `torch-linear-assignment`'s CUDA kernel.
+- Date & Nagi, *GPU-accelerated Hungarian algorithms for the Linear Assignment Problem*,
+  Parallel Computing, 2016. <https://doi.org/10.1016/j.parco.2016.05.012>
+- Lopes et al., *Fast block distributed CUDA implementation of the Hungarian algorithm*,
+  JPDC, 2019. <https://doi.org/10.1016/j.jpdc.2019.03.014>
+- Kawtikwar & Nagi, *HyLAC: Hybrid linear assignment solver in CUDA*, JPDC, 2024 — its
+  coarse-grained "stream-solver" (one thread block per small LAP) is this workload exactly.
+  <https://github.com/researchgroup-zx93920/HyLAC>
+- `torch-linear-assignment` — batched CUDA LAP with a PyTorch API, natively rectangular.
+  <https://github.com/ivan-chai/torch-linear-assignment>
+
+## 9. Operational notes
 
 - **No GPU on the login node** (`torch.cuda.is_available()` is `False` there). Everything —
   including correctness tests — runs under SLURM.
-- Available in the env today: `triton` 3.5.1, `torch` 2.9.1+cu128, `scipy` 1.17.0, `lap` 0.9.4,
-  `lap1015` (vendored, `src/lap1015`). **Not** available: `cupy`, `numba`,
-  `torch_linear_assignment`.
+- Available in the env today: `triton` 3.5.1, `torch` 2.10.0+cu128, `scipy` 1.17.0, `lap` 0.9.4,
+  `lap1015` (vendored, `src/lap1015`). **Not** available: `cupy`, `numba`.
+- `torch_linear_assignment` is **built but not installed**, at
+  `/blue/avery/m.mazza/projects/fastml/vendor/torch-linear-assignment` — put it on
+  `PYTHONPATH` and set `LD_LIBRARY_PATH` to the pixi env's `lib`. Build recipe and its three
+  traps are in `NOTES.md`, 2026-08-25.
 - Read [`../profiling/NOTES.md`](../profiling/NOTES.md)'s "Operational gotchas" block before
   submitting anything.
 
-## 9. Files in this directory
+## 10. Files in this directory
 
 | file | purpose |
 |---|---|
@@ -353,9 +509,15 @@ Written down now, before any measurement, so they cannot drift:
 | `NOTES.md` | chronological running log — what was actually measured |
 | `submit_phase0_matcher_share_b200.sh` | Phase 0 gate: the matcher's share of a B200 step |
 | `bench_device_matcher.py` | Phase 1 offline correctness + speed benchmark |
+| `crop_distribution.py` | the per-event target distribution and the crop it produces per batch — no GPU needed. **Reports a ceiling**, not the crop: it counts particles, the matcher crops to non-resonance particles |
+| `bench_jv_solver.py` | Phase 1 for `torch-linear-assignment`: exactness and speed on a dumped tensor |
+| `submit_bench_jv_b200.sh` | the above on one B200, replaying an existing dump (no training stage) |
+| `.gitignore` | keeps the ~923 MB dumped tensor and the incidental checkpoints out of git |
 | `submit_bench_device_matcher.sh` | Phase 1 on one B200 |
+| `submit_real_cost_replay_b200.sh` | Phase 1 step 2: dump one step's real costs, then replay them |
 | `submit_paired_device_matcher_b200.sh` | Phase 3 paired A/B, both arms in one allocation |
 | `phase0_logs/` | Phase 0 outputs, stamped with the SLURM job id |
+| `phase1_logs/` | the dumped real cost tensor and its manifest |
 
 And what it touches outside this directory:
 
@@ -364,6 +526,9 @@ And what it touches outside this directory:
 | `src/hepattn/models/device_lap.py` | the batched auction solver and the permutation builder |
 | `src/hepattn/models/matcher.py` | `DEVICE_SOLVERS`, the `device_solver*` config keys, `_match_on_device` |
 | `src/hepattn/callbacks/matcher_timer.py` | `MatcherTimer` — the Phase-0 sync-bracketed attribution |
+| `src/hepattn/callbacks/matcher_cost_dump.py` | `MatcherCostDump` — lifts one step's real cost tensor out for offline replay |
 | `src/hepattn/experiments/clic/configs/profile_phase0.yaml` | Phase 0 overlay: production settings, no profiler |
+| `src/hepattn/experiments/clic/configs/dump_matcher_costs.yaml` | Phase 1 overlay: dump one step's costs, then stop |
+| `tests/callbacks/test_matcher_cost_dump.py` | the dump's contract with the replay reader |
 | `tests/matching/test_device_solver.py` | exactness vs scipy, CPU and (marked) GPU |
 | `src/hepattn/experiments/clic/configs/clic_v6_cudamatch.yaml` | Phase 3 arm B — `clic_v6_maskfix.yaml` with the matcher block swapped |

@@ -114,7 +114,12 @@ def main() -> None:
         object_valid = blob.get("object_valid_mask") if isinstance(blob, dict) else None
         if object_valid is None:
             object_valid = torch.ones(costs.shape[0], costs.shape[2], dtype=torch.bool, device=costs.device)
-        cases = [("real", costs, object_valid)]
+        if isinstance(blob, dict) and blob.get("query_valid_mask") is not None:
+            # Both solver paths mask padded queries themselves, and dropping the mask here
+            # would compare two solvers on a problem neither of them is actually given.
+            raise NotImplementedError("this dump carries a query_valid_mask, which the replay does not thread through yet")
+        label = f"real n={costs.shape[0]} q={costs.shape[1]} t={costs.shape[2]}"
+        cases = [(label, costs, object_valid)]
     else:
         cases = []
         for batch, queries, targets in [

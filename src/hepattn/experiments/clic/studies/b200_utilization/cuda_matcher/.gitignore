@@ -1,0 +1,9 @@
+# Job outputs are kept in-tree because the study's results live with its plan, but the bulk
+# artefacts must not be: the dumped cost tensor is ~923 MB and the checkpoints are incidental
+# (the dump/timing jobs train only far enough to reach the step they measure).
+#
+# Kept: phase0_logs/*/phase0_matcher_timing.{json,npz}, phase1_logs/*/*.json, config.yaml,
+# metadata.yaml -- the small files that are the actual results.
+*.pt
+checkpoints/
+__pycache__/

@@ -53,10 +53,40 @@ nvidia-smi
 cd $REPO/src/hepattn/experiments/clic/
 export TMPDIR=/var/tmp/
 
+# The host arm's whole meaning depends on the solve actually being threaded. A lap1015 built
+# without the GIL release turns --cpus-per-task=16 into one working thread and inflates the
+# matcher's share, which is what happened to the first run of this job (job 39401280, see
+# NOTES.md). Print the flag so the log says which kind of number it produced.
+srun apptainer run --nv --bind /blue/,/cmsuf/ $REPO/pixi.sif pixi run \
+  python -c "import lap1015; print('lap1015.releases_gil:', lap1015.releases_gil)"
+
+# N_JOBS overrides the matcher's host thread pool. The config asks for 16, which job 40137096
+# showed is 4-8x past the contention cliff on a --cpus-per-task=16 allocation: 8 threads solve
+# the same batch in 0.24 s where 16 take 1.07 s, and the same cliff shows in scipy, so it is the
+# allocation and not the solver. Sweep this to find the in-training optimum, which may be lower
+# than the bench's 8 because 16 dataloader workers are competing for the same cores.
+N_JOBS=${N_JOBS:-}
+JOBS_ARG=""
+if [ -n "$N_JOBS" ]; then
+  JOBS_ARG="--model.model.init_args.matcher.init_args.n_jobs=$N_JOBS"
+  echo "matcher n_jobs override: $N_JOBS"
+fi
+
+# SOLVER overrides the host solver. Needed to compare configs that do not agree on it:
+# clic_v6_maskfix asks for lap1015_late and clic_v7_maskfix asks for scipy, so measuring each
+# as-configured would fold a solver difference into what is meant to be a model-size
+# comparison. Leave unset to measure a config exactly as it ships.
+SOLVER=${SOLVER:-}
+SOLVER_ARG=""
+if [ -n "$SOLVER" ]; then
+  SOLVER_ARG="--model.model.init_args.matcher.init_args.default_solver=$SOLVER"
+  echo "matcher default_solver override: $SOLVER"
+fi
+
 PYTORCH_CMD="python main.py fit \
   --config $CONFIG \
   --config configs/profile_phase0.yaml \
-  --trainer.devices=1"
+  --trainer.devices=1 $JOBS_ARG $SOLVER_ARG"
 
 srun apptainer run --nv --bind /blue/,/cmsuf/ \
   $REPO/pixi.sif pixi run $PYTORCH_CMD

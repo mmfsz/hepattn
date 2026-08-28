@@ -12,6 +12,13 @@
 # to None, so the two arms differ by exactly the matcher block (verified with --print_config).
 # No code checkout, no rebuild.
 #
+# The device arm's 'jv' solver needs the torch-linear-assignment build, which is kept out of the
+# shared pixi env and reached by PYTHONPATH. Note the build below is the one compiled against the
+# DEFAULT env (torch 2.9.1), which is what main.py runs under; the tree without the suffix targets
+# the clic env (torch 2.10) that the offline benches use, and its .so does not load here --
+# "undefined symbol: _ZNK3c1010TensorImpl15incref_pyobjectEv" is that mismatch. Neither is a
+# fallback for the other. See NOTES.md, 2026-08-26.
+#
 # Protocol: configs/profile_noprof.yaml -- profiler OFF, 300 steps, no validation.
 # Parse with ../profiling/parse_throughput.py --batch 2048, which splits on the ARM: markers.
 #
@@ -52,6 +59,13 @@ cd /blue/avery/m.mazza/projects/fastml/hepattn/src/hepattn/experiments/clic/
 export TMPDIR=/var/tmp/
 
 SIF=/blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif
+VENDOR=/blue/avery/m.mazza/projects/fastml/vendor/torch-linear-assignment-default
+PIXI_ENV=/blue/avery/m.mazza/projects/fastml/hepattn/.pixi/envs/default
+
+# Carried into the container. Harmless for the host arm, which never imports the extension;
+# without the second one the import dies on CXXABI_1.3.15.
+export APPTAINERENV_PYTHONPATH=$VENDOR
+export APPTAINERENV_LD_LIBRARY_PATH=$PIXI_ENV/lib
 
 run_arm () {
   local arm="$1" cfg="$2"
