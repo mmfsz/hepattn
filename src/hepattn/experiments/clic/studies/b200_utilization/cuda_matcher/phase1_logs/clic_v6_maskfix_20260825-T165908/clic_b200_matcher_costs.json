@@ -1,0 +1,18 @@
+{
+  "shape": [
+    10240,
+    150,
+    150
+  ],
+  "dtype": "torch.float32",
+  "dump_step": 45,
+  "max_problems": null,
+  "has_query_valid_mask": false,
+  "targets_min": 0,
+  "targets_median": 46,
+  "targets_max": 132,
+  "non_finite": 30889950,
+  "cost_min": -0.3453696370124817,
+  "cost_max": 9.315681457519531,
+  "cost_std": 1.6549644470214844
+}

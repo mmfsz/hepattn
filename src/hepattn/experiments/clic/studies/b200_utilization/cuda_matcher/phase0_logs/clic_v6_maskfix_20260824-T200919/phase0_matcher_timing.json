@@ -1,0 +1,47 @@
+{
+  "num_steps": 50,
+  "warmup_steps_discarded": 40,
+  "batch_size": 2048,
+  "median_step_s": 5.977615114534274,
+  "mean_step_s": 5.957122866297141,
+  "samples_per_s": 342.6115533970044,
+  "device_fallbacks": 0,
+  "buckets": {
+    "total": {
+      "median_s": 5.61221351500717,
+      "mean_s": 5.584525705159177,
+      "std_s": 0.1702943027340052,
+      "median_pct_of_step": 93.88716749864594
+    },
+    "prep": {
+      "median_s": 0.0004081405058968812,
+      "mean_s": 0.00044349892763420937,
+      "std_s": 0.0002472308758789626,
+      "median_pct_of_step": 0.006827815074686021
+    },
+    "dtoh": {
+      "median_s": 0.014844938006717712,
+      "mean_s": 0.0147631533164531,
+      "std_s": 0.0005266832877426943,
+      "median_pct_of_step": 0.24834215188299735
+    },
+    "solve": {
+      "median_s": 5.595676091470523,
+      "mean_s": 5.56720520718256,
+      "std_s": 0.16978673133563046,
+      "median_pct_of_step": 93.61051162134736
+    },
+    "device": {
+      "median_s": 0.0,
+      "mean_s": 0.0,
+      "std_s": 0.0,
+      "median_pct_of_step": 0.0
+    },
+    "other": {
+      "median_s": 0.36986542752129026,
+      "mean_s": 0.3725971611379646,
+      "std_s": 0.01726039223126998,
+      "median_pct_of_step": 6.18750823588459
+    }
+  }
+}

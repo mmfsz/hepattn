@@ -1,9 +1,30 @@
 # Job outputs are kept in-tree because the study's results live with its plan, but the bulk
 # artefacts must not be: the dumped cost tensor is ~923 MB and the checkpoints are incidental
 # (the dump/timing jobs train only far enough to reach the step they measure).
-#
-# Kept: phase0_logs/*/phase0_matcher_timing.{json,npz}, phase1_logs/*/*.json, config.yaml,
-# metadata.yaml -- the small files that are the actual results.
 *.pt
 checkpoints/
 __pycache__/
+
+# Kept: the small files that ARE the results, ~75 kB in total. Each one costs a B200
+# allocation to regenerate, so they are cheaper to store than to re-measure.
+#
+# The re-inclusions below are load-bearing, not decorative: the repo root ignores *.json and
+# *.npz globally (.gitignore:9 and :123), which silently swallowed every one of these until
+# 2026-08-28. A negation in a deeper .gitignore takes precedence, which is why they work here.
+# Do not "tidy" them away -- config.yaml and metadata.yaml would be committed for each run
+# while the numbers those runs produced would not be.
+#
+#   phase0_matcher_timing.json  MatcherTimer's per-bucket summary: the step's time split into
+#                               prep / dtoh / solve / device / other, with each bucket's share
+#                               of the step. Phase 0's headline -- that the prize is the solve
+#                               and not the 921.6 MB device-to-host copy -- is read off these.
+#   phase0_matcher_timing.npz   the per-step arrays behind that summary (one value per measured
+#                               step, per bucket). Needed for anything the median hides: the
+#                               host solve's variance collapsing from 76% to 3.7% relative std
+#                               at batch 2048 is only visible here.
+#   phase1_logs/*/*.json        the manifest for the dumped cost tensor -- its shape, the crop
+#                               it was taken at, and the run it came from. The .pt it describes
+#                               is ignored above, so without this the tensor is unidentifiable.
+!phase0_logs/*/phase0_matcher_timing.json
+!phase0_logs/*/phase0_matcher_timing.npz
+!phase1_logs/*/*.json
