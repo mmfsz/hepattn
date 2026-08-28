@@ -12,13 +12,20 @@ import scipy
 import torch
 from torch import nn
 
-from hepattn.models.device_lap import assignment_to_permutation, batched_auction
+from hepattn.models.device_lap import assignment_to_permutation, batched_auction, batched_jv, require_jv
 from hepattn.utils.import_utils import check_import_safe
 
 # Solvers that run on whichever device the costs are already on, rather than on the host.
 # Opt-in via Matcher(device_solver=...); see the module docstring of hepattn.models.device_lap.
 DEVICE_SOLVERS = {
     "auction": batched_auction,
+    "jv": batched_jv,
+}
+
+# Device solvers that need a compiled dependency check for it here, so a missing or CPU-only
+# build fails at construction with a build recipe rather than mid-training, or worse, quietly.
+DEVICE_SOLVER_CHECKS = {
+    "jv": require_jv,
 }
 
 _POOL_LOCK = Lock()
@@ -246,18 +253,24 @@ class Matcher(nn.Module):
         device_solver : str | None
             If set, solve on whichever device the costs already live on instead of copying
             them to the host, which removes the device-to-host transfer and the host stall
-            that goes with it. Defaults to None, i.e. the host solvers above. Worth turning on
-            only when training is host-bound: on a GPU that is already saturated the solver's
-            own kernels cost more than the stall they remove.
+            that goes with it. One of 'jv' (exact Jonker-Volgenant, needs the compiled
+            torch-linear-assignment extension) or 'auction' (epsilon-optimal, pure torch, and
+            measured to be a poor fit for real cost matrices -- see the study notes). Defaults
+            to None, i.e. the host solvers above. Worth turning on only when training is
+            host-bound: on a GPU that is already saturated the solver's own kernels cost more
+            than the stall they remove.
         device_solver_eps : float
             Bidding increment for the auction solver, in units of each problem's cost range.
-            The assignment is within num_valid_targets * eps of optimal.
+            The assignment is within num_valid_targets * eps of optimal. Ignored by 'jv',
+            which is exact and has no tolerance to trade.
         device_solver_max_iters : int
             Cap on auction rounds before a problem is declared unsolved and handed to the host
-            solver. Guards against a degenerate cost matrix looping forever.
+            solver. Guards against a degenerate cost matrix looping forever. Ignored by 'jv',
+            which is strongly polynomial and has no iteration cap to hit.
         device_solver_fallback : bool
             If true, problems the device solver does not converge on are re-solved with
-            default_solver on the host. If false, non-convergence raises.
+            default_solver on the host. If false, non-convergence raises. Only 'auction' can
+            fail to converge.
         verbose : bool
             If true, extra information on solver timing is printed.
         """
@@ -265,8 +278,12 @@ class Matcher(nn.Module):
             raise ValueError(f"Unknown solver: {default_solver}. Available solvers: {list(SOLVERS.keys())}")
         if parallel_backend not in {"thread", "process"}:
             raise ValueError(f"parallel_backend must be 'thread' or 'process', got: {parallel_backend}")
-        if device_solver is not None and device_solver not in DEVICE_SOLVERS:
-            raise ValueError(f"Unknown device solver: {device_solver}. Available device solvers: {list(DEVICE_SOLVERS.keys())}")
+        if device_solver is not None:
+            if device_solver not in DEVICE_SOLVERS:
+                raise ValueError(f"Unknown device solver: {device_solver}. Available device solvers: {list(DEVICE_SOLVERS.keys())}")
+            check = DEVICE_SOLVER_CHECKS.get(device_solver)
+            if check is not None:
+                check()
         if default_solver.startswith("lap1015") and parallel_solver and parallel_backend == "thread" and not _lap1015_releases_gil():
             warnings.warn(
                 f"The installed lap1015 extension does not release the GIL while solving, so the '{default_solver}' solver "
@@ -392,9 +409,11 @@ class Matcher(nn.Module):
         )
         pred_idxs = assignment_to_permutation(assigned, lengths, num_pred)
 
-        # Non-convergence is expected to be rare, so this sync is the price of not having to
-        # trust the solver blindly. Falling back per event keeps the result exact.
-        if bool(solved.all()):
+        # A solver that reports None cannot come back short, so there is nothing to check and
+        # no reason to stall the host on the result -- which is the point of the device path.
+        # Otherwise non-convergence is expected to be rare, and this sync is the price of not
+        # having to trust the solver blindly. Falling back per event keeps the result exact.
+        if solved is None or bool(solved.all()):
             return pred_idxs
         if not self.device_solver_fallback:
             raise RuntimeError(

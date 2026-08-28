@@ -40,7 +40,7 @@ default of one phase, and the price reset for anyone who sets a schedule anyway.
 import torch
 from torch import Tensor
 
-__all__ = ["assignment_to_permutation", "batched_auction"]
+__all__ = ["assignment_to_permutation", "batched_auction", "batched_jv", "require_jv"]
 
 
 def _normalise(costs: Tensor, allowed: Tensor, forbidden_cost: float) -> Tensor:
@@ -219,6 +219,131 @@ def batched_auction(
     assigned = torch.where(row_valid, slots[:, :num_rows], torch.full_like(slots[:, :num_rows], -1))
     solved = ~(row_valid & (assigned < 0)).any(dim=1)
     return assigned, solved
+
+
+def require_jv(device: torch.device | None = None):
+    """Import the batched Jonker-Volgenant backend, or explain how to get one.
+
+    Deliberately loud, and called at ``Matcher`` construction rather than mid-training. A
+    missing build must not quietly leave the caller on the host solver, and a CPU-only build
+    must not quietly solve device costs on the host -- ``batch_linear_assignment`` merely warns
+    in that case. A silent degradation of exactly that kind (a ``lap1015`` extension built
+    without ``FORCE_CUDA``) cost this study a day; see the study notes under
+    ``experiments/clic/studies/b200_utilization/cuda_matcher``.
+
+    Args:
+        device: If given and on CUDA, also require that the extension was built with CUDA.
+
+    Returns:
+        The ``batch_linear_assignment`` entry point.
+
+    Raises:
+        RuntimeError: If the package is not importable, or was built without CUDA support and
+            the costs are on a CUDA device.
+    """
+    try:
+        # The private backend, for has_cuda(): a build-time property with no public accessor.
+        import torch_linear_assignment._backend as backend  # noqa: PLC0415, PLC2701
+        from torch_linear_assignment import batch_linear_assignment  # noqa: PLC0415
+    except ImportError as exc:
+        raise RuntimeError(
+            "The 'jv' device solver needs torch-linear-assignment, which is not importable. "
+            "Build it with FORCE_CUDA=1 (setup.py gates on torch.cuda.is_available(), so a "
+            "build on a login node silently produces a CPU-only extension) and "
+            "TORCH_CUDA_ARCH_LIST set for the target GPU, then put the built tree on "
+            "PYTHONPATH with LD_LIBRARY_PATH pointing at this environment's lib. "
+            f"Original error: {exc}"
+        ) from exc
+
+    if device is not None and torch.device(device).type == "cuda" and not backend.has_cuda():
+        raise RuntimeError(
+            "torch-linear-assignment was built without CUDA support, so the 'jv' device solver "
+            "would solve GPU costs on the host and quietly undo the point of the option. "
+            "Rebuild with FORCE_CUDA=1 and TORCH_CUDA_ARCH_LIST set for this GPU."
+        )
+    return batch_linear_assignment
+
+
+@torch.no_grad()
+def batched_jv(
+    costs: Tensor,
+    row_valid: Tensor,
+    col_allowed: Tensor | None = None,
+    **_auction_options,
+) -> tuple[Tensor, None]:
+    """Solve a batch of rectangular linear assignment problems exactly, by Jonker-Volgenant.
+
+    A drop-in replacement for :func:`batched_auction` that is exact rather than epsilon-optimal.
+    ``torch_linear_assignment`` implements Crouse (2016) -- the algorithm scipy itself uses --
+    batched over problems on the GPU. It is strongly polynomial, so its cost depends on the
+    shape of a problem and not on the values in it; the auction is pseudo-polynomial, which is
+    what killed it on real mask-BCE costs (89.0% exact, 21.6% non-convergence, 350x slower than
+    the host path) where uniform-random costs had shown no such trouble.
+
+    Two preparation decisions carry the correctness of this path, and neither is obvious from
+    the host solvers:
+
+    * **Forbidden entries** go to ``num_rows + 1`` after the per-problem affine normalisation,
+      as they do for the auction, and *not* to the ``float32_max / 10`` sentinel
+      :meth:`~hepattn.models.matcher.Matcher._prepare_costs` hands the host solvers. JV works
+      with fp32 duals (``cost - u - v``); a 3.4e37 entry destroys them.
+    * **Padded rows** get a constant cost across every column. A batched solver assigns every
+      row it is given, so padded rows cannot simply abstain the way they do in the auction.
+      Constant rows contribute the same total whichever columns they take, so the solver parks
+      them wherever suits the real rows and the optimum over the real rows is unchanged. This
+      is the standard dummy-row reduction and it is exact -- padding with a large sentinel would
+      not be, since the padded rows would then compete for the cheap columns.
+
+    Args:
+        costs: [batch, num_rows, num_cols] cost matrices. Non-finite entries are treated as
+            forbidden assignments rather than propagating NaN.
+        row_valid: [batch, num_rows] bool marking the rows that need an assignment. Padded rows
+            come back as -1.
+        col_allowed: Optional [batch, num_cols] bool marking the columns that may be assigned.
+        **_auction_options: Accepted and ignored, so both device solvers share one call
+            signature. JV has no bidding increment and no iteration cap to tune.
+
+    Returns:
+        Tuple of the [batch, num_rows] column assigned to each valid row (-1 for padded rows)
+        and ``None``, which tells the caller the solver cannot come back short -- there is
+        nothing to check and so no reason to sync the host on the result.
+
+    Raises:
+        ValueError: If the costs are not 3-dimensional, if a problem has more rows than
+            columns, or if one has more valid rows than assignable columns.
+    """
+    if costs.ndim != 3:
+        raise ValueError(f"Expected costs of shape [batch, num_rows, num_cols], got {tuple(costs.shape)}")
+
+    batch, num_rows, num_cols = costs.shape
+    device = costs.device
+    dtype = costs.dtype if costs.dtype.is_floating_point else torch.float32
+    costs = costs.to(dtype)
+
+    row_valid = row_valid.to(device=device, dtype=torch.bool)
+    if col_allowed is None:
+        col_allowed = torch.ones(batch, num_cols, dtype=torch.bool, device=device)
+    else:
+        col_allowed = col_allowed.to(device=device, dtype=torch.bool)
+
+    if bool((row_valid.sum(dim=1) > col_allowed.sum(dim=1)).any()):
+        raise ValueError("Some assignment problems have more valid rows than assignable columns")
+    # Every row is handed to the solver, padding included, so there must be a column for each.
+    # The auction has no such requirement, since its padded rows simply never bid.
+    if num_rows > num_cols:
+        raise ValueError(f"Batched JV needs at least as many columns as rows, got {num_rows} rows into {num_cols} columns")
+
+    unassigned = torch.full((batch, num_rows), -1, dtype=torch.long, device=device)
+    if batch == 0 or num_rows == 0 or num_cols == 0:
+        return unassigned, None
+
+    solve = require_jv(device)
+    allowed = torch.isfinite(costs) & row_valid[:, :, None] & col_allowed[:, None, :]
+    prepared = _normalise(costs, allowed, forbidden_cost=float(num_rows + 1))
+    prepared = torch.where(row_valid[:, :, None], prepared, torch.zeros_like(prepared))
+
+    matching = solve(prepared.contiguous()).to(device=device, dtype=torch.long)
+    return torch.where(row_valid, matching, unassigned), None
 
 
 @torch.no_grad()
