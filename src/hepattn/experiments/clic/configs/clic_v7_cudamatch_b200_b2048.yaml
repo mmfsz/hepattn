@@ -1,4 +1,16 @@
-name: clic_v7_maskfix
+# v7 (width 64) for 1x B200.
+#
+# Split out of the former clic_v7_maskfix.yaml on 2026-08-27, which carried batch 512 -- the
+# L4 per-GPU limit (24 GB cannot hold more), not a property of the model. On a 183 GB B200
+# that left the card mostly empty. 2048 matches the v6 B200 geometry, so v6 and v7 B200
+# numbers are directly comparable.
+#
+# The batch size is in the filename deliberately: do not change it here without renaming the
+# file. batch_size is PER GPU; devices is 1 here, so global batch = 2048.
+#
+# CPU-matcher sibling (same geometry, the baseline): clic_v7_maskfix_b200_b2048.yaml
+# The ONLY difference is the matcher block. Keep it that way.
+name: clic_v7_cudamatch_b200_b2048
 seed_everything: 42
 
 data:
@@ -31,7 +43,7 @@ data:
   num_test: -1
   num_val: 5000
 
-  batch_size: 512
+  batch_size: 2048
   incidence_cutval: 0.01
 
   scale_dict_path: &scale_dict_path configs/clic_var_transform.yaml
@@ -39,7 +51,7 @@ data:
 trainer:
   max_epochs: 200
   accelerator: gpu
-  devices: 2
+  devices: 1
   precision: bf16-mixed
   gradient_clip_val: 0.1
   log_every_n_steps: 50
@@ -139,10 +151,16 @@ model:
       matcher:
         class_path: hepattn.models.matcher.Matcher
         init_args:
+          # Solve the assignment on the GPU instead of copying the cost matrices to the host.
+          # At batch 2048 the matcher owns 75.6% of a v7 step (job 40399207), so this is where
+          # the time is. 'jv' is exact Jonker-Volgenant and cannot fail to converge, so the
+          # host solver below is a formality: scipy, unparallelised, as in clic_v6_cudamatch.
+          # Requires the torch-linear-assignment build for the pixi env that runs main.py --
+          # the *-default tree. Matcher.__init__ raises with the recipe if it is missing.
+          device_solver: jv
           default_solver: scipy
           adaptive_solver: false
-          parallel_solver: true
-          n_jobs: 16
+          parallel_solver: false
 
       tasks:
         class_path: torch.nn.ModuleList
