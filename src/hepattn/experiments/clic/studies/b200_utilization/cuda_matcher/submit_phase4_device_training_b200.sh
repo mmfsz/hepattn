@@ -64,6 +64,11 @@ PIXI_ENV=/blue/avery/m.mazza/projects/fastml/hepattn/.pixi/envs/default
 # The second export is equally load-bearing: without it the import dies on CXXABI_1.3.15.
 VENDOR=/blue/avery/m.mazza/projects/fastml/vendor/torch-linear-assignment-default
 export APPTAINERENV_PYTHONPATH=$VENDOR
+
+# JV kernel block size: nothing exported. Since 2026-09-08 the production tree's SMPCores()
+# carries a compute-capability major-10 case returning 32, so a B200 gets the measured
+# geometry by construction and an L4 keeps 128 (NOTES.md, 2026-09-08). TLA_BLOCK_SIZE
+# survives in the binary as an override for sweeps only; do not set it here.
 export APPTAINERENV_LD_LIBRARY_PATH=$PIXI_ENV/lib
 
 # Own Inductor/Triton cache, as in the A/B: no inherited kernels from another run.

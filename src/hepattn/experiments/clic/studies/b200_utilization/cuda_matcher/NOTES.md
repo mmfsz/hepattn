@@ -1748,3 +1748,92 @@ two overlapping lines, which at plot resolution is equally consistent with agree
 which would prove nothing.** All the force is in the exactness, seven orders of magnitude below
 chance cancellation, and a line plot cannot display that. The fix is to put the number on the
 panel, not to demote the panel.
+
+---
+
+## 2026-09-08 — Block size 32 moves from the environment into the kernel
+
+The 2026-08-28 deployment switched the +4.4% on with `export APPTAINERENV_TLA_BLOCK_SIZE=32` in
+individual submit scripts, and README next-step 3 named the problem the same day: the device
+solver is chosen by *config*, the block size by *environment*, so any new script gets the device
+matcher at 128 and silently loses the win. The fix is to make the device decide.
+
+### What changed in the kernel
+
+`SMPCores(int device_index)` in `src/torch_linear_assignment_cuda_kernel.cu` switches on the
+compute-capability major and covers 2 (Fermi) through 9 (Hopper). A B200 is major 10 and fell
+through to `return 128; // Unknown device`. `build_tla_smpcores10.sh` patches a `case 10:`
+returning **32** into that switch — deliberately not the 128 FP32 cores a Blackwell SM actually
+has, because the function's only caller uses the value as the launch block size and 32 is what
+was measured. Everything else is the candidate tree unchanged: default-env ABI (torch 2.9.1),
+`sm_89 + sm_100`, and the `TLA_BLOCK_SIZE` runtime override kept as an explicit override for
+sweeps. An L4 (major 8, minor 9) keeps 128 through the existing Ada branch, so the hardware
+where 32 has never been measured is untouched.
+
+### Verified on hardware before deployment (job 40660022, 2026-08-30)
+
+`strings` can prove the override is compiled in but not what the default *resolves to*, so
+`verify_smpcores10.py` replayed the dumped cost tensor with the variable unset against both
+geometries it could have picked:
+
+| `TLA_BLOCK_SIZE` | solve | vs 128 | assignment |
+|---:|---:|---:|---|
+| unset | 154.02 ms | **0.91×** | identical |
+| 32 | 151.58 ms | 0.89× | identical |
+| 128 | 169.62 ms | 1.00× | identical |
+
+Unset sits 1.6% from the explicit 32 (tolerance 2%) and 9.2% from 128 (needed 5%): **PASS**.
+A build without the fix would have put the unset row on top of 128.
+
+### Deployed
+
+`vendor/torch-linear-assignment-default` — the tree every training run's `PYTHONPATH` points at —
+replaced by a copy of the verified `-smpcores10` tree. The outgoing binary is kept verbatim as
+`torch-linear-assignment-default-presmpcores10-20260908`; reverting is one `mv`, as before.
+
+| | arch | `SMPCores` major 10 | md5 |
+|---|---|---|---|
+| new production | sm_89 + sm_100 | 32 | `d9f12e5b0bb3` |
+| rollback copy (was production 2026-08-28 → 09-08) | sm_89 + sm_100 | falls through to 128 | `948d01ef506b` |
+| rollback copy from 2026-08-28 (pre-blocksize) | sm_100 | falls through to 128 | `dd963a970a9f` |
+
+No training job was running at the swap. A process that had already imported the old binary
+would not have been affected in any case — the rename leaves its mapping intact — and a queued
+job that started afterwards would still have been at 32 through its (now removed) export.
+
+**The per-script exports are gone.** `APPTAINERENV_TLA_BLOCK_SIZE=32` was removed from all five
+scripts that set it — `submit_phase4_device_training_b200.sh`, `submit_shadow_matcher_b200.sh`,
+`submit_shadow_raw_dump_b200.sh`, and the size study's `submit_v7_cudamatch_training_b200.sh`
+and `submit_ablation_b200.sh` — each replaced by a comment pointing here. The one script that
+still sets the variable is `submit_phase0_blocksize_b200.sh`, which sweeps it on purpose; note
+its "unset" cell now means 32, not 128, so a re-run of that sweep compares 32 against itself
+unless the 128 cell is made explicit.
+
+There is now one source of truth: a B200 gets 32 when and only when the CUDA matcher runs,
+because the block size is a launch parameter of that one kernel and nothing else reads it. A
+host-matcher run on the same node never launches it and is unaffected.
+
+### Housekeeping in the same commit
+
+- `submit_cpus_sensitivity_b200.sh` **deleted**. Its `taskset -c 0-15` method measured 7/7/4
+  cores instead of 16/8/4 (2026-08-28, correction 3); the redo goes through `N_JOBS` in
+  `submit_phase0_matcher_share_b200.sh`, which needs no new script.
+- `build_tla_multiarch.sh` **deleted**. A half-build (both archs, no patch) that lived one day
+  before the candidate build subsumed it. `submit_paired_device_matcher_l4.sh`, which loaded the
+  tree it produced, now loads production `-default`, which has carried `sm_89` since 08-28 —
+  so the L4 arm and any B200 repeat run the same binary, and the L4 keeps 128 through
+  `SMPCores` with nothing exported.
+- `build_tla_blocksize.sh` kept: `submit_bench_jv_blocksize_b200.sh` still targets the
+  clic-env tree it builds.
+
+### Still open
+
+- **The L4 arm ran and nobody read it.** Job 40525026 (2026-08-28, 18 min, both arms clean,
+  `ORDER=host_first`) completed before this entry and after the README's "running now". Its
+  numbers are in `slurm_logs/slurm-40525026.clic-paired-devmatch-l4.out` and are not in this
+  document. That is the last §6 ship condition.
+- The `phase0_blocksize_*_{40533246,40534109,40538140}.{json,npz}` files that
+  `compare_blocksize_phase0.py` reads live directly under `phase0_logs/` and are swallowed by
+  the repo-root `*.json` / `*.npz` ignores — the same trap this directory's `.gitignore` warns
+  about, one level up from where its negations reach. They are kept out of the tree on
+  purpose for now; anyone reproducing the +4.4% needs the three jobs' Phase-0 timing files.

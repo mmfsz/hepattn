@@ -40,31 +40,18 @@
 >    requested core counts. Vary the matcher's `N_JOBS` through the existing override in
 >    `submit_phase0_matcher_share_b200.sh` instead — no affinity manipulation, and it isolates the
 >    matcher from the dataloader. See NOTES.md, 2026-08-28.
-> 3. **[TOMORROW] Move block size 32 from an env var into the kernel, where it belongs.**
->    Block size 32 is deployed and measured (+4.41% mean over three allocations, jobs 40533246,
->    40534109, 40538140), but it is switched on by `export APPTAINERENV_TLA_BLOCK_SIZE=32` in
->    individual submit scripts. **That is the wrong mechanism and it fails open**: the device
->    solver is enabled by *config* (`device_solver: jv`) while the block size comes from the
->    *environment*, so the two are decoupled and any new submit script — the likely thing for
->    someone to write — gets the device matcher at 128 and silently loses the 4.4%.
->
->    The fix is one line in `SMPCores()`. The only reason 128 is in play is that its switch covers
->    compute capability majors 2–9 and the B200 is major 10, so it falls through to
->    `return 128; // Unknown device`. Add the major-10 case returning 32 and every B200 run gets it
->    automatically, with nothing to forget. An L4 keeps 128 through its existing Ada branch, so the
->    hardware where 32 has never been measured is untouched, and `TLA_BLOCK_SIZE` survives as the
->    override for future sweeps. Rebuild is ~2 min (`build_tla_candidate.sh`), then re-run
->    `submit_phase0_blocksize_b200.sh` to confirm the default path now lands at ~512 ms rather
->    than ~535 ms without the variable set.
->
->    Once it is in the kernel, the per-script `TLA_BLOCK_SIZE=32` lines become redundant and
->    should be removed so there is one source of truth.
+> 3. **DONE (2026-09-08) — block size 32 lives in the kernel.** `SMPCores()` now has the
+>    compute-capability major-10 case returning 32 (`build_tla_smpcores10.sh`), verified on a B200
+>    with the variable unset (job 40660022: 0.91× of 128, identical assignments), and deployed as
+>    `vendor/torch-linear-assignment-default` with the outgoing binary kept as a dated rollback.
+>    The five per-script `TLA_BLOCK_SIZE=32` exports are removed; a B200 gets 32 by construction
+>    whenever the CUDA matcher runs, and an L4 keeps 128. See NOTES.md, 2026-09-08.
 >
 >    ⚠️ When reading any Phase-0 file from a *device* arm, read the step time, not the `device`
 >    bucket. §6's `solved=None` contract skips the post-solve sync, so the bucket records only
 >    kernel launch (~1.5 ms against a ~170 ms kernel) and the cost lands in `other`. Bucket
 >    attribution is valid on host arms only.
-> 3. **The vendoring decision**, now unblocked: §3's objection to this candidate was the
+> 4. **The vendoring decision**, now unblocked: §3's objection to this candidate was the
 >    compiled-CUDA dependency, and that objection was made contingent on Phase 3 being worth it.
 >    It is. Last because it is an engineering choice with no measurement attached, and Phase 4
 >    could still make it moot.
