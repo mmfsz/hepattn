@@ -4,6 +4,7 @@ from hepattn.callbacks.compile import Compile
 from hepattn.callbacks.gradient_logger import GradientLoggerCallback
 from hepattn.callbacks.inference_timer import InferenceTimer
 from hepattn.callbacks.matcher_cost_dump import MatcherCostDump
+from hepattn.callbacks.matcher_shadow import MatcherShadow
 from hepattn.callbacks.matcher_timer import MatcherTimer
 from hepattn.callbacks.prediction_writer import PredictionWriter
 from hepattn.callbacks.saveconfig import SaveConfig
@@ -18,6 +19,7 @@ __all__ = [
     "GradientLoggerCallback",
     "InferenceTimer",
     "MatcherCostDump",
+    "MatcherShadow",
     "MatcherTimer",
     "MyThroughputMonitor",
     "PredictionWriter",

@@ -1,0 +1,54 @@
+# Inline shadow overlay for the CUDA matching study: solve every matching problem twice, on the
+# device and on the host, and record how different the two answers are as training proceeds.
+# Layer on top of clic_v6_cudamatch.yaml via a second --config.
+# See studies/b200_utilization/cuda_matcher/NOTES.md, 2026-08-30.
+#
+# The study's evidence that the device solver is a safe substitute has a hole in the middle. At
+# the bottom, bench_device_matcher.py scores one dumped step's costs against scipy's float64
+# optimum -- one scalar, one step, and silent about *which* pairing was chosen. At the top, the
+# Phase-4 A/B compares two full trainings on val loss and jet-E IQR -- what anyone actually
+# cares about, but measured downstream of ~10^5 optimiser steps, where solver differences and
+# SGD noise are indistinguishable. This run fills the gap: given identical cost matrices, how
+# often do the two solvers return the same assignment, how much worse is the one the GPU picked,
+# and does either answer drift as the model sharpens?
+#
+# The production matcher call is untouched -- the shadow solve runs beside it and its result is
+# thrown away -- so this is also a valid device arm for physics, on the same 200-epoch schedule
+# as Phase 4. Nothing here shortens the run: max_epochs, validation and checkpointing all come
+# through from the base config unchanged.
+name: clic_v6_cudamatch_shadow
+
+trainer:
+  callbacks:
+    - class_path: hepattn.callbacks.Compile
+    - class_path: hepattn.callbacks.MatcherShadow
+      init_args:
+        # Every 100 steps of the ~97,200 in the schedule: ~970 samples of the drift curve. The
+        # comparison is exact per problem (10,240 of them per shadow step), so the interval is
+        # set by how finely the trend over training should be resolved, not by statistics.
+        interval: 100
+        # Past torch.compile warmup, so the recorded solve times are steady-state ones.
+        warmup: 50
+        # scipy, not lap1015_late: it is the reference the rest of the study scores against and
+        # it has no GIL caveat when threaded. Matches --cpus-per-task in the submit script.
+        reference_solver: scipy
+        n_jobs: 16
+        # null = score whatever the model's matcher is configured with, i.e. 'jv' here.
+        device_solver: null
+        # Disagreeing pairs scored for mask IoU per shadow step, plus an equal-sized control
+        # sample of agreeing pairs. A few thousand is far past what the quantiles need.
+        max_mask_pairs: 4096
+        output_name: matcher_shadow
+        verbose: true
+    - class_path: hepattn.callbacks.InferenceTimer
+    - class_path: hepattn.callbacks.SaveConfig
+    - class_path: hepattn.callbacks.Checkpoint
+      init_args:
+        monitor: val/loss
+        save_last: true
+    - class_path: hepattn.experiments.clic.PflowPredictionWriter
+    - class_path: lightning.pytorch.callbacks.ModelSummary
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+      init_args:
+        refresh_rate: 50

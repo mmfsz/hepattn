@@ -6,8 +6,8 @@ incidental -- it is pseudo-polynomial, so its cost depends on the *values* in th
 only on its shape. See NOTES.md, 2026-08-25.
 
 ``torch-linear-assignment`` implements Crouse (2016), the same algorithm scipy uses, batched on
-the GPU. It is strongly polynomial, so neither the aspect ratio nor the degeneracy of real
-mask-BCE costs can provoke the auction's failure mode. This script asks the same two Phase-1
+the GPU. It is strongly polynomial, so neither the aspect ratio nor the degeneracy of the
+real matcher costs can provoke the auction's failure mode. This script asks the same two Phase-1
 questions of it, against the same bar: exact total cost versus scipy in float64, and a solve
 faster than the host path's 0.538 s on this tensor.
 

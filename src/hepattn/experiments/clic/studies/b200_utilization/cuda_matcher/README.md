@@ -1,7 +1,16 @@
 # CUDA Hungarian matching — study plan
 
-> **Status (2026-08-27): Phases 0–3 are done. What remains is Phase 4 — physics equivalence —
-> and the L4 arm of Phase 3.** The matcher owns 66.8% of a B200 training step. The auction failed
+> **Status (2026-08-28): Phases 0–4 are done and all PASS. The one thing still standing between
+> this study and a ship decision is the L4 arm of Phase 3, which is running now.** Phase 4 cleared
+> on **both** v6 and v7: every jet-E IQR difference sits 5–9× inside §4.3's thresholds in both
+> kinematic conventions, with the conventions disagreeing on sign, which is that rule's own noise
+> check. Runtimes: v6 **11 h 22 m vs 33 h 03 m** (2.91×), v7 **7 h 40 m vs 23 h 15 m** (3.03×).
+> The energy-*scale* question the v6 run left open is closed too — the v7 arms swap ranking on
+> the global median between epoch 169 and convergence, a ~0.012 within-run wander against a
+> σ_stat of 0.0004, so it was epoch scatter and not the solver. See [`NOTES.md`](NOTES.md),
+> 2026-08-28.
+>
+> **Earlier status (2026-08-27): Phases 0–3 are done.** The matcher owns 66.8% of a B200 training step. The auction failed
 > §6's kill criterion on real costs (job 40228586: 89% exact, 21.6% non-convergence, 350× slower).
 > Jonker–Volgenant replaced it and **passed Phase 1 cleanly**: 100% exact in float64 and exact
 > to fp32 rounding in float32 (job 40290161), with a ~180 ms solve that reproduces across
@@ -16,18 +25,45 @@
 > | 1 — offline correctness | **DONE — PASS for JV.** *Auction: NEGATIVE* (job 40228586, real costs): 89.01% exact, 21.6% non-convergence, 350× slower — §6 kill criterion met as written. *JV (`torch-linear-assignment`): POSITIVE* (jobs 40252873, 40290161, same tensor): **100.00% exact in float64, worst excess 0**; in float32, 99.76% exact with the disagreements at 2.8e-09 relative — near-ties an order below fp32 epsilon. Device solve **~180 ms**, reproducible across nodes |
 > | 2 — config option | **DONE.** `device_solver: jv` → `device_lap.batched_jv`, carrying the two load-bearing numerical decisions (`num_rows + 1` for forbidden entries, constant-cost padded rows), a `require_jv()` build check that fails at construction, and a `solved=None` contract that skips the per-call device sync. Tests parametrised over both solvers, green on CPU and on a B200 (job 40290666); `Matcher().device_solver` is still `None` |
 > | 3 — paired A/B throughput | **DONE — PASS on B200** (jobs 40291275, 40291276, 40291277; three nodes, both `ORDER`s, all six arms clean). Device **4231 samples/s** against a host arm of 1358–1790; within-allocation ratios 2.34×/2.77×/3.12×, mean 2.74× = **91% of Phase 0's 3.0× Amdahl ceiling**. The load-bearing observation is not the ratio: **the device arm varies 0.8% across nodes and the host arm 32%**, exactly as "host-bound" predicts, so the ratio is a function of the node the host arm drew and the absolute 4231 samples/s is the honest headline. **Still outstanding: the L4 repeat at batch 256, and the `--cpus-per-task` sensitivity check** |
-> | 4 — physics equivalence | not started; **unblocked** — Phase 3 says deploy, so this now runs at full length |
+> | 4 — physics equivalence | **DONE — PASS on v6 and v7.** v6 (job 40393482 vs baseline 38598204) and v7 (jobs 40405423 vs 40400036), both arms at 200 epochs, each evaluated at its own lowest-val_loss checkpoint and **both scored with the host solver** so the eval path contributes nothing. v7 converged deltas: global IQR −0.0015 / +0.0008 against a 0.0073 threshold; high-E −0.0039 / +0.0004 against 0.0164. Opposite signs across conventions on every row. The GPU matcher is physics-neutral |
 >
-> ### Next steps, in order (2026-08-27)
+> ### Next steps, in order (2026-08-28)
 >
-> 1. **Phase 4 — physics equivalence**, at full length, because Phase 3 said deploy. First
->    because it is the only remaining question that can still *kill* the change: a throughput win
->    that moves the loss curves or the jet-E IQR is not a win. Protocol in §5.
-> 2. **Finish Phase 3's two open arms** — the L4 repeat at batch 256
->    (`submit_maskfix_l4_3gpu.sh` as the template) and the `--cpus-per-task` 16→4 sensitivity
->    check on the device arm. Second rather than first because neither can kill the B200 result;
->    but the L4 arm is what the "opt-in" default is *justified* by, so it is not optional before
->    ship, and a surprise win there would be a bigger result than the B200 one.
+> 1. **The L4 arm — the last ship condition, and running now.** It is what the "opt-in" default
+>    is *justified* by: the whole design assumes the L4 loses. It was never merely unscheduled —
+>    it was not runnable, because every build of the extension contained only `sm_100` cubins
+>    (verified with `cuobjdump --list-elf`) and an L4 is `sm_89`. The device arm would have died
+>    with "no kernel image is available for execution on the device". A build carrying both
+>    architectures is the prerequisite.
+> 2. **Redo the `--cpus-per-task` check**, which job 40516325 got wrong: it used `taskset -c 0-15`
+>    and SLURM does not allocate CPUs 0–15, so the cells measured the intersection rather than the
+>    requested core counts. Vary the matcher's `N_JOBS` through the existing override in
+>    `submit_phase0_matcher_share_b200.sh` instead — no affinity manipulation, and it isolates the
+>    matcher from the dataloader. See NOTES.md, 2026-08-28.
+> 3. **[TOMORROW] Move block size 32 from an env var into the kernel, where it belongs.**
+>    Block size 32 is deployed and measured (+4.41% mean over three allocations, jobs 40533246,
+>    40534109, 40538140), but it is switched on by `export APPTAINERENV_TLA_BLOCK_SIZE=32` in
+>    individual submit scripts. **That is the wrong mechanism and it fails open**: the device
+>    solver is enabled by *config* (`device_solver: jv`) while the block size comes from the
+>    *environment*, so the two are decoupled and any new submit script — the likely thing for
+>    someone to write — gets the device matcher at 128 and silently loses the 4.4%.
+>
+>    The fix is one line in `SMPCores()`. The only reason 128 is in play is that its switch covers
+>    compute capability majors 2–9 and the B200 is major 10, so it falls through to
+>    `return 128; // Unknown device`. Add the major-10 case returning 32 and every B200 run gets it
+>    automatically, with nothing to forget. An L4 keeps 128 through its existing Ada branch, so the
+>    hardware where 32 has never been measured is untouched, and `TLA_BLOCK_SIZE` survives as the
+>    override for future sweeps. Rebuild is ~2 min (`build_tla_candidate.sh`), then re-run
+>    `submit_phase0_blocksize_b200.sh` to confirm the default path now lands at ~512 ms rather
+>    than ~535 ms without the variable set.
+>
+>    Once it is in the kernel, the per-script `TLA_BLOCK_SIZE=32` lines become redundant and
+>    should be removed so there is one source of truth.
+>
+>    ⚠️ When reading any Phase-0 file from a *device* arm, read the step time, not the `device`
+>    bucket. §6's `solved=None` contract skips the post-solve sync, so the bucket records only
+>    kernel launch (~1.5 ms against a ~170 ms kernel) and the cost lands in `other`. Bucket
+>    attribution is valid on host arms only.
 > 3. **The vendoring decision**, now unblocked: §3's objection to this candidate was the
 >    compiled-CUDA dependency, and that objection was made contingent on Phase 3 being worth it.
 >    It is. Last because it is an engineering choice with no measurement attached, and Phase 4
@@ -306,7 +342,7 @@ login node, so even the correctness runs go through SLURM.
    rounded to a few levels so most entries tie), rectangular, scale-swept over 1e-3…1e6,
    padded rows, forbidden columns, non-finite entries, and empty-target events. Every case
    reaches scipy's optimum in float64 with zero fallbacks. This is necessary, not sufficient:
-   synthetic uniform costs are far better conditioned than real mask-BCE costs.
+   synthetic uniform costs are far better conditioned than the real matcher costs.
 2. **Correctness on real cost matrices** — **still to do, and it is the one that matters.**
    Dump one training step's real stacked cost tensor (10,240 × 150 × 150) from a B200 run and
    replay it with `--costs`.
@@ -412,7 +448,7 @@ Written down now, before any measurement, so they cannot drift:
    feasible assignment (which costs at most `num_rows`) without being astronomically large.
    The affine normalisation is exact because every permutation sums exactly `num_rows` entries.
    Covered by `test_auction_is_scale_invariant` over 1e-3…1e6.
-2. **Degenerate cost matrices cause auction thrashing.** Real mask-BCE costs have many
+2. **Degenerate cost matrices cause auction thrashing.** The real matcher costs have many
    near-equal entries. Synthetic ties are handled (`test_auction_handles_degenerate_costs`,
    costs rounded to 4 levels, exact with no fallbacks), and the tie-break is deterministic:
    the highest-indexed of the tied bidders wins the column, so exactly one row is seated even

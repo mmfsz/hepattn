@@ -130,10 +130,16 @@ def bootstrap(name, n=400, seed=0):
 fig, axes = plt.subplots(2, 2, figsize=(13, 9), constrained_layout=True)
 results, boots, globals_, medians = {}, {}, {}, {}
 
+# NOT the same jets for every arm, despite sharing every event. `hung_match_jets` runs per
+# network and the dr < 0.1 / pt_min cuts are then applied per network, so an arm that
+# reconstructs a jet slightly differently keeps or loses it. Counts spread ~0.6% across arms.
+# The header used to claim the jets were identical, which is false and invites reading a change
+# of quoted arm as a change in the sample.
 ref0 = RES[f"{ARMS[0][0]} [{BRANCHES[0]}]"]["ref_e"]
-print("\njets per truth-E bin (the same matched jets for both arms):")
+_counts = {k: len(v["ref_e"]) for k, v in RES.items()}
+print(f"\njets per truth-E bin, for {ARMS[0][0]} [{BRANCHES[0]}] (arms share events, not jets):")
 print("  " + "  ".join(f"E{int(m)}:{int(((ref0 > a) & (ref0 < b)).sum())}" for m, (a, b) in zip(mids, pairwise(e_bins), strict=False)))
-print(f"  total matched jets: {len(ref0)}")
+print(f"  total matched jets: {len(ref0)}   (across all arms: {min(_counts.values())}-{max(_counts.values())})")
 
 for row, br in enumerate(BRANCHES):
     a1, a2 = axes[row]

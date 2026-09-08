@@ -277,7 +277,7 @@ def batched_jv(
     ``torch_linear_assignment`` implements Crouse (2016) -- the algorithm scipy itself uses --
     batched over problems on the GPU. It is strongly polynomial, so its cost depends on the
     shape of a problem and not on the values in it; the auction is pseudo-polynomial, which is
-    what killed it on real mask-BCE costs (89.0% exact, 21.6% non-convergence, 350x slower than
+    what killed it on the real matcher costs (89.0% exact, 21.6% non-convergence, 350x slower than
     the host path) where uniform-random costs had shown no such trouble.
 
     Two preparation decisions carry the correctness of this path, and neither is obvious from

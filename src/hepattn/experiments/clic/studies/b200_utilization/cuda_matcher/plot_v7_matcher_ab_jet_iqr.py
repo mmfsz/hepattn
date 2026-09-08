@@ -5,12 +5,15 @@ against the truth particle the matcher itself chose; this script uses the type-C
 the reconstructed particles into jets, match jets to truth jets on kinematics, and look at the
 energy response -- which is how Pandora is scored and the only honest reading (§4.1).
 
-ARMS. The host arm (job 40400036) was still training when this was first run, so the controlled
-comparison is taken at the last epoch BOTH arms had, epoch 169, evaluated from the two
-checkpoints with everything else held fixed. The device arm's converged epoch-197 point is
-plotted too, as the answer to "where does the device arm actually land", but it is NOT the A/B:
-it has 28 more epochs than the epoch-169 pair. Add the host arm's converged point to ARMS when
-job 40400036 finishes and the pair at 197-ish becomes the headline.
+ARMS. Both arms have now finished all 200 epochs, so the headline A/B is the CONVERGED pair:
+each arm's lowest-val_loss checkpoint, device epoch 197 (4.05102) against host epoch 195
+(4.03413), which is the selection rule every other evaluation in this study used. That pair
+drives the verdict section.
+
+The epoch-169 pair is kept as secondary arms. It was the headline while the host arm (job
+40400036) was still training and epoch 169 was the last epoch BOTH arms had; it stays plotted so
+the mid-training reading remains on record and so the converged verdict can be checked against
+it. A conclusion that flips between the two pairs would be a conclusion about noise.
 
 Both arms are evaluated with the HOST solver (studies/model_size/submit_eval_v7.sh forces it),
 so the eval path is identical and contributes nothing to any difference seen here.
@@ -45,19 +48,28 @@ from hepattn.experiments.clic.performance.performance import Performance, Perfor
 L = Path("/blue/avery/m.mazza/projects/fastml/hepattn/src/hepattn/experiments/clic/logs")
 OUT = Path(__file__).resolve().parent
 
+DEV197 = "device jv @197"
+HOST195 = "host lap1015 @195"
 DEV169 = "device jv @169"
 HOST169 = "host lap1015 @169"
-DEV197 = "device jv @197"
-# (display name, run folder, ckpt stem). The first two are the paired A/B.
+CUDAMATCH = "clic_v7_cudamatch_b200_b2048_20260827-T130314"
+MASKFIX = "clic_v7_maskfix_b200_b2048_20260827-T120002"
+# (display name, run folder, ckpt stem). The converged pair leads; the epoch-169 pair follows.
 ARMS = [
-    (DEV169, "clic_v7_cudamatch_b200_b2048_20260827-T130314", "epoch=169-val_loss=4.12771"),
-    (HOST169, "clic_v7_maskfix_b200_b2048_20260827-T120002", "epoch=169-val_loss=4.11265"),
-    (DEV197, "clic_v7_cudamatch_b200_b2048_20260827-T130314", "epoch=197-val_loss=4.05102"),
+    (DEV197, CUDAMATCH, "epoch=197-val_loss=4.05102"),
+    (HOST195, MASKFIX, "epoch=195-val_loss=4.03413"),
+    (DEV169, CUDAMATCH, "epoch=169-val_loss=4.12771"),
+    (HOST169, MASKFIX, "epoch=169-val_loss=4.11265"),
 ]
-PAIR = (DEV169, HOST169)
+PAIR = (DEV197, HOST195)
+PAIR_169 = (DEV169, HOST169)
 BRANCHES = ["mpflow", "mpflow_proxy"]
-COLORS = {DEV169: "#bc5090", HOST169: "#003f5c", DEV197: "#ffa600"}
-LINESTYLES = {DEV169: "-", HOST169: "-", DEV197: "--"}
+# Hue carries the arm (device vs host) so the pairing survives; weight carries which pair is the
+# headline -- solid and opaque for the converged A/B, dotted and faded for the epoch-169 legacy.
+COLORS = {DEV197: "#bc5090", HOST195: "#003f5c", DEV169: "#bc5090", HOST169: "#003f5c"}
+LINESTYLES = {DEV197: "-", HOST195: "-", DEV169: ":", HOST169: ":"}
+ALPHAS = {DEV197: 1.0, HOST195: 1.0, DEV169: 0.4, HOST169: 0.4}
+LINEWIDTHS = {DEV197: 1.9, HOST195: 1.9, DEV169: 1.0, HOST169: 1.0}
 
 networks = []
 for disp, folder, stem in ARMS:
@@ -131,11 +143,17 @@ fig, axes = plt.subplots(2, 2, figsize=(13, 9), constrained_layout=True)
 results, boots, globals_, medians = {}, {}, {}, {}
 
 # Jet counts per bin: STUDY.md P0.1 asks for these explicitly, and the low-E threshold is open
-# until they are on record.
-ref0 = RES[f"{ARMS[0][0]} [{BRANCHES[0]}]"]["ref_e"]
-print("\njets per truth-E bin (identical across arms — the same matched jets):")
+# until they are on record. Quoted for ONE named arm, because the counts are arm-dependent and
+# not the same matched jets: every arm is jet-matched to truth separately and then cut on
+# dr < 0.1, so an arm that reconstructs a jet slightly differently keeps or loses it. The spread
+# across arms is printed alongside so a change in it cannot be misread as a change in the event
+# intersection -- that is identical for every arm, and is the "common event count" above.
+ref_name = f"{ARMS[0][0]} [{BRANCHES[0]}]"
+ref0 = RES[ref_name]["ref_e"]
+print(f"\njets per truth-E bin, for {ref_name}:")
 print("  " + "  ".join(f"E{int(m)}:{int(((ref0 > a) & (ref0 < b)).sum())}" for m, (a, b) in zip(mids, pairwise(e_bins), strict=False)))
-print(f"  total matched jets: {len(ref0)}")
+_counts = {k: len(v["ref_e"]) for k, v in RES.items()}
+print(f"  total matched jets: {len(ref0)}   (across all arms: {min(_counts.values())}-{max(_counts.values())})")
 
 for row, br in enumerate(BRANCHES):
     a1, a2 = axes[row]
@@ -149,9 +167,9 @@ for row, br in enumerate(BRANCHES):
         boots[name] = biqr
         globals_[name] = (glob, bglob.std())
         medians[name] = (gmed, bgmed.std())
-        ls = LINESTYLES[disp]
-        a1.plot(mids, med, "o", ls=ls, label=disp, color=COLORS[disp], markersize=3)
-        a2.errorbar(mids, iqr, yerr=biqr.std(axis=0), fmt="o", ls=ls, label=disp, color=COLORS[disp], markersize=3, capsize=2)
+        style = {"color": COLORS[disp], "ls": LINESTYLES[disp], "alpha": ALPHAS[disp], "lw": LINEWIDTHS[disp], "markersize": 3}
+        a1.plot(mids, med, "o", label=disp, **style)
+        a2.errorbar(mids, iqr, yerr=biqr.std(axis=0), fmt="o", label=disp, capsize=2, **style)
     a1.axhline(0, ls="--", color="k", alpha=0.4)
     a1.set(xlabel="Jet truth E [GeV]", ylabel="Median jet E response", title=f"Median response — {br}")
     a2.set(xlabel="Jet truth E [GeV]", ylabel="IQR of jet E response", title=f"IQR — {br}")
@@ -161,7 +179,7 @@ for row, br in enumerate(BRANCHES):
 
 fig.suptitle(
     "v7 batch-2048 B200 — GPU matcher (jv) vs CPU matcher (lap1015), identical configs but for the solver\n"
-    "solid = the controlled pair at epoch 169   |   dashed = device arm converged at epoch 197 (28 epochs further, not the A/B)",
+    "solid = the converged A/B, each arm's lowest val_loss (device 197, host 195)   |   dotted = the earlier epoch-169 pair",
     fontsize=11,
 )
 outpath = OUT / "v7_matcher_ab_jet_iqr.png"
@@ -183,7 +201,7 @@ for name, (_med, iqr) in results.items():
 
 # The A/B itself. Same events for both arms, so resampling them independently OVERSTATES the
 # error -- the test is conservative.
-print("\nA/B, device - host at epoch 169 (bootstrap sigma_stat; thresholds from STUDY.md 4.3):")
+print(f"\nA/B, device - host at the converged pair ({PAIR[0]} - {PAIR[1]}); thresholds from STUDY.md 4.3:")
 for br in BRANCHES:
     nd, nh = f"{PAIR[0]} [{br}]", f"{PAIR[1]} [{br}]"
     if nd not in boots or nh not in boots:
@@ -217,3 +235,21 @@ for lbl, kind in [("IQR global", "iqr"), ("IQR high-E", "hi"), ("median global",
             ds.append(results[nd][1][HI] - results[nh][1][HI])
     agree = "same sign" if ds[0] * ds[1] > 0 else "OPPOSITE signs -> reads as noise"
     print(f"  {lbl:<16} mpflow {ds[0]:+.4f}   mpflow_proxy {ds[1]:+.4f}   {agree}")
+
+# The epoch-169 pair, reported only so the converged verdict can be checked against the reading
+# that stood while the host arm was still training. A verdict that flips between the two pairs
+# would be a verdict about noise, not about the solver.
+print(f"\nfor continuity — the earlier pair ({PAIR_169[0]} - {PAIR_169[1]}), same thresholds:")
+for br in BRANCHES:
+    nd, nh = f"{PAIR_169[0]} [{br}]", f"{PAIR_169[1]} [{br}]"
+    if nd not in globals_ or nh not in globals_:
+        print(f"  {br}: arm missing, skipped")
+        continue
+    gd = globals_[nd][0] - globals_[nh][0]
+    hd = results[nd][1][HI] - results[nh][1][HI]
+    md = medians[nd][0] - medians[nh][0]
+    print(
+        f"  {br:<12} IQR global {gd:+.4f} -> {'REAL' if abs(gd) > 0.0073 else 'not detectable'}"
+        f"   IQR high-E {hd:+.4f} -> {'REAL' if abs(hd) > 0.0164 else 'not detectable'}"
+        f"   median global {md:+.4f}"
+    )

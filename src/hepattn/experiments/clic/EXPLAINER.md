@@ -84,15 +84,43 @@ This is a softer, more informative version of the hit mask.
 
 The model predicts 150 particle slots, but they come out in **no fixed order** — slot 7 is not tied to any particular true particle. So we cannot simply compare prediction `i` to truth `i`; we must first decide which prediction is meant to explain which truth particle. That decision is **matching**: a one-to-one assignment between predicted slots and truth particles.
 
-To make it, we build a cost matrix scoring every (prediction, truth) pair by how badly that prediction would explain that particle, combining all four tasks:
+To make it, we build a cost matrix scoring every (prediction, truth) pair by how badly that prediction would explain that particle:
 
 ```
-cost(pred_i, truth_j) = 2 × class_cost + 5 × mask_BCE + 1 × mask_DICE + 1 × KL + 10 × regression_L1
+layer_0        :  cost(pred_i, truth_j) = 1 × mask_DICE
+layers 1,2,3   :  cost(pred_i, truth_j) = 2 × class_CE + 1 × mask_DICE
+final layer    :  cost(pred_i, truth_j) = 2 × class_CE + 1 × mask_DICE + 1 × KL + 10 × regression_L1
 ```
+
+**There are three different cost functions here, not one**, and the differences are all easy to
+miss because they come from defaults rather than from anything written in the config:
+
+- **The mask contributes DICE only, not BCE.** The mask task lists `mask_bce` and `mask_dice`
+  under both `losses:` and `costs:`, but the BCE line is commented out under `costs:`. So BCE is
+  trained on — at weight 5, the largest mask weight — and simply does not enter the matching.
+- **KL and regression appear at the final layer only.** `IncidenceRegressionTask` and
+  `IncidenceBasedRegressionTask` both set `has_intermediate_loss: false`, so `should_run_at_layer`
+  ([`task.py:37`](../../models/task.py#L37)) returns `False` and the decoder never executes them
+  at `layer_0..3`; they run only in the unconditional `outputs["final"]` pass.
+  `_compute_decoder_costs` skips any task missing from a layer's outputs, so **4 of every 5
+  problems are matched without the highest-weighted term.**
+- **Classification is absent from `layer_0`.** Not from the config, which leaves it at
+  `has_intermediate_loss: true`, but from `ObjectClassificationTask.__init__`, whose own default
+  is `has_first_layer_loss: bool = False`. `should_run_at_layer` gates the first layer separately,
+  so `layer_0` is matched on mask DICE alone.
+
+At CLIC's batch 2048 that makes the 10,240 problems a *mixture*: 2,048 posed with one cost term,
+6,144 with two, and 2,048 with four. Anything that characterises "the cost matrices" — their
+conditioning, their degeneracy, the difficulty they pose a solver — is averaging over that
+mixture.
+
+Note also that this task defines its cost by *rebinding* `self.cost = self.new_cost` in
+`__init__` (`task.py:1452`, selected by `cost: new`) rather than by declaring a `costs:` block —
+so grepping the config for cost weights will not find it.
 
 The **Hungarian algorithm** (`scipy.optimize.linear_sum_assignment`, optimal bipartite matching) then picks the one-to-one pairing that minimises the *total* cost over the event — a global optimum, not a greedy per-particle guess. Each event is independent, so the batch is solved in parallel using `n_jobs=16` threads. Matching only *finds* the assignment: it runs under `no_grad` on detached costs, so no gradient flows through the assignment itself. The predictions are then reordered so that prediction `i` aligns with truth particle `i` (unmatched slots are supervised as null/background), and all losses are computed on those aligned pairs.
 
-Matching is redone at **every decoder layer**, not just the final one. This gives each layer its own aligned supervision signal (gradient flow to early layers via deep supervision), and it also produces a depth-wise **curriculum**: early layers have coarse embeddings, so their cost matrix is blurry and the assignment only demands getting each slot into roughly the right neighborhood; by the final layer the embeddings are sharp, the cost matrix is peaked, and the assignment demands exact hit membership, class, and momentum. A given query slot is thus supervised against a progressively tightening (easy → hard) target as it moves through the stack. Note this is an *emergent* effect of applying matching to progressively-refined representations across depth — not curriculum learning in the strict sense of a hand-designed easy-to-hard schedule over training steps.
+Matching is redone at **every decoder layer**, not just the final one. This gives each layer its own aligned supervision signal (gradient flow to early layers via deep supervision), and it also produces a depth-wise **curriculum**: early layers have coarse embeddings, so their cost matrix is blurry and the assignment only demands getting each slot into roughly the right neighborhood; by the final layer the embeddings are sharp, the cost matrix is peaked, and the assignment demands exact hit membership, class, and momentum — the last of which, per the note above, enters the cost at this layer and no other. A given query slot is thus supervised against a progressively tightening (easy → hard) target as it moves through the stack. Note this is an *emergent* effect of applying matching to progressively-refined representations across depth — not curriculum learning in the strict sense of a hand-designed easy-to-hard schedule over training steps.
 
 ---
 

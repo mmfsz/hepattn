@@ -1,0 +1,43 @@
+# Dump the shadow comparison's PER-PAIR arrays for three steps of the converged v6 model.
+# Layer on top of clic_v6_cudamatch.yaml + shadow_matcher.yaml is NOT possible -- jsonargparse
+# REPLACES lists across --config layers, so the callback list has to be restated in full here,
+# the same reason shadow_matcher.yaml and dump_matcher_costs.yaml restate it.
+#
+# WHY. Job 40640611's matcher_shadow.jsonl stores five quantiles per step, and that summary
+# turned out to be unable to answer the question it raised. Over epochs 150-199 the device and
+# host mask-IoU distributions are bitwise identical at q0.01, q0.5 and q0.99 at 100% of steps,
+# and the per-step mean agrees to ~1e-9 -- while 66% of individual swapped pairs move by more
+# than 0.01. Independent signs would put the per-step mean at ~2.4e-2, so the agreement is seven
+# orders of magnitude too exact to be chance: the two solvers appear to return the SAME multiset
+# of IoU values, merely attached to different particles. Quantiles cannot confirm that, because
+# it is a statement about the joint distribution. The per-pair arrays can, in one line of numpy
+# (sorted(iou_device) == sorted(iou_host)), and they also carry the query indices and the two
+# cost entries, which is enough to reconstruct the cycle structure of each disagreement.
+#
+# Roughly 300 disagreeing pairs per step at convergence, so each .npz is kilobytes.
+#
+# Run: resume the converged checkpoint for three training batches, no validation, no
+# checkpointing. See submit_shadow_raw_dump_b200.sh.
+name: clic_v6_cudamatch_shadow_raw
+
+trainer:
+  callbacks:
+    - class_path: hepattn.callbacks.Compile
+    - class_path: hepattn.callbacks.MatcherShadow
+      init_args:
+        # Every step, from the first: this run exists to capture a handful of steps, not a curve.
+        interval: 1
+        warmup: 0
+        reference_solver: scipy
+        n_jobs: 16
+        device_solver: null
+        max_mask_pairs: 4096
+        # Three steps, so a one-step coincidence cannot be mistaken for a structural result.
+        raw_dump_steps: 3
+        output_name: matcher_shadow_raw
+        verbose: true
+    - class_path: hepattn.callbacks.SaveConfig
+    - class_path: lightning.pytorch.callbacks.ModelSummary
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+      init_args:
+        refresh_rate: 1

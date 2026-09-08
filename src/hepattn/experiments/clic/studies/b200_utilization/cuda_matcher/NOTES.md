@@ -1169,3 +1169,582 @@ in any case, so it does not threaten the ship decision.
 > The lesson for the next A/B is the one the throughput work already learned: **run the arms in
 > the same allocation on the same day.** The v6 pair reused a 24-day-old baseline to save 33 h
 > of queue, and the saving cost an unresolvable ambiguity that only the v7 pair could settle.
+
+---
+
+## 2026-08-28 — the converged v7 A/B, a kernel-occupancy result, and three corrections
+
+### Phase 4 on v7: physics-neutral, with the epoch confound removed
+
+Job 40400036 (host, `lap1015_late`) finished all 200 epochs in **23 h 15 m** against the device
+arm's **7 h 40 m** — **3.03×**, and close to the 3.10× projected from its partial progress.
+Each arm evaluated at its own lowest-val_loss checkpoint, as every other evaluation here has
+been: device epoch 197 (4.05102), host epoch 195 (4.03413).
+
+| device − host, converged | mpflow | mpflow_proxy | threshold |
+|---|---:|---:|---:|
+| IQR global | −0.0015 | +0.0008 | 0.0073 |
+| IQR 160–180 GeV | −0.0039 | +0.0004 | 0.0164 |
+| IQR 0–20 GeV | −0.0035 | +0.0002 | ~0.017 |
+
+Everything 5–9× under threshold, **opposite signs in all three rows**, which is §4.3's noise
+check. Agrees with the epoch-169 stopgap taken while the host arm was still training.
+
+**The median question from the v6 entry above is now answered, and the answer is "epoch
+scatter".** There it moved the same way in both conventions and the sign check did not dismiss
+it. At the converged v7 pair the signs are opposite (+0.0046 / −0.0032), and the reason is
+visible directly: the arms *swap ranking* between the two pairs.
+
+| mpflow global median | epoch 169 | converged |
+|---|---:|---:|
+| device | +0.0040 | +0.0158 |
+| host | +0.0160 | +0.0112 |
+
+That is ~0.012 of within-run wander against a bootstrap σ_stat of 0.0004 — **30×**. No solver
+effect survives that. It also makes concrete why §4.2's missing σ_repro for the median matters:
+nobody can issue a verdict on energy *scale* until it exists.
+
+### The JV kernel uses ~3% of the GPU, and that is the ceiling nobody has touched
+
+The profiler (job 40449541) shows `solve_cuda_kernel_batch` at **172.7 ms/step, 39.4% of all
+CUDA time** — the single largest kernel in the device arm's step. Reading the vendored source
+explains why it is nonetheless the cheap option: **the kernel runs one thread per problem**,
+each thread executing a complete sequential JV solve on its own 132×150 matrix.
+
+10,240 problems = 10,240 threads = **320 warps**, against a B200's 148 SMs × 64 = 9,472 warp
+slots. **3.4% occupancy.** It beats 16 CPU cores by running ten thousand very slow threads at
+once, not by using the GPU well.
+
+`bench_jv_blocksize.py` (job 40507155) measured both knobs on the real dumped tensor:
+
+**Axis A — block size.** `SMPCores()` switches on compute capability majors 2–9; the B200 is
+major 10, so it falls through to `return 128; // Unknown device`. Our block size is a fallback
+for hardware the library has never heard of.
+
+| `TLA_BLOCK_SIZE` | blocks | blocks/SM | solve | vs 128 | assignment |
+|---:|---:|---:|---:|---:|---|
+| 32 | 320 | 2.16 | 153.31 ms | **0.90×** | identical |
+| 64 | 160 | 1.08 | 157.69 ms | 0.92× | identical |
+| 128 (default here) | 80 | 0.54 | 170.64 ms | 1.00× | identical |
+| 256 | 40 | 0.27 | 203.68 ms | 1.19× | identical |
+| 512 | 20 | 0.14 | 247.11 ms | 1.45× | identical |
+
+A free **10%**, bit-identical assignments at every setting. The gain saturates exactly where
+block count reaches SM count, and the other direction is punished hard — 512 puts everything on
+20 SMs and costs 45%. Requires the `TLA_BLOCK_SIZE` patch (`build_tla_blocksize.sh`) to be built
+into the production `-default` tree, so **confirm with a Phase-0 run before adopting**: this is
+an offline number and in training the GPU is also running the model.
+
+**Axis B — problem count. The prediction was wrong and the correction is the useful part.**
+
+| problems | warps | % of slots | solve | µs/problem |
+|---:|---:|---:|---:|---:|
+| 1,280 | 40 | 0.4% | 89.41 ms | 69.85 |
+| 2,560 | 80 | 0.8% | **89.42 ms** | 34.93 |
+| 5,120 | 160 | 1.7% | 104.84 ms | 20.48 |
+| 10,240 | 320 | 3.4% | 155.06 ms | 15.14 |
+
+Doubling 1,280 → 2,560 is *free*. Then it is not: +17%, then +48%, heading toward linear. **The
+free regime ends at under 1% of the warp slots**, so warp capacity was never the constraint —
+the kernel is memory-limited, not occupancy-limited. Each thread streams a 79 KB matrix with
+adjacent threads reading ~19,800 elements apart, so no two threads share a cache line: ~810 MB
+with no reuse.
+
+Two consequences:
+
+1. **Batch scaling is not nearly free for the solver.** Extrapolated, 4× the problems costs ~3×
+   the time — ~20% cheaper per sample, not 4×. A larger batch has to be justified by the
+   non-matcher overhead amortising (0.121 → 0.096 ms/sample, Phase 0), which is a smaller prize
+   and still costs a fresh physics validation.
+2. **Neither knob reaches the hardware.** Filling 9,472 warp slots at one problem per thread
+   needs ~303,000 problems, i.e. batch 60,000. The change that would is **one problem per warp
+   instead of per thread** — 10,240 warps against 9,472 slots fills the GPU at today's batch,
+   and would fix the coalescing at the same time. Days of CUDA work; the largest ceiling here.
+
+The 89 ms floor is worth its own line: below ~2,560 problems everything is co-resident, so that
+is essentially **one CUDA thread solving one 132×150 problem**, against ~1 ms on a CPU core.
+
+### Three corrections
+
+**1. There is no `mask_bce` in the cost matrix, and this document said there was.** `mask_bce`
+is commented out under the mask task's `costs:` block while `mask_dice: 1.0` is live. Phrases
+like "real mask-BCE costs" appeared in NOTES, README, `bench_jv_solver.py` and `device_lap.py`
+as the *explanation* for the auction's death. The measurements are untouched — the auction did
+score 89.0% exact on the real tensor — but the mechanism was misattributed, and the wording is
+now corrected to "the real matcher costs".
+
+Worse, the costs are not even homogeneous. `has_intermediate_loss: false` on both incidence and
+regression, plus `ObjectClassificationTask`'s own `has_first_layer_loss: bool = False` default,
+gives **three** cost functions across the 10,240 problems:
+
+| | layer_0 | layers 1–3 | final |
+|---|---|---|---|
+| problems (batch 2048) | 2,048 | 6,144 | 2,048 |
+| cost | `1×mask_dice` | `2×object_ce + 1×mask_dice` | `+ 1×kl_div + 10×regression` |
+
+**4 of every 5 problems are matched without the highest-weighted term.** Every exactness and
+timing number in this study averages over that mixture. See the corrected section in
+[`EXPLAINER.md`](../../../EXPLAINER.md).
+
+**2. The jet counts are per-arm, not shared.** Both jet-IQR scripts printed "identical across
+arms — the same matched jets". False: `hung_match_jets` runs per network and the `dr < 0.1` /
+`pt_min` cuts are applied per network afterwards, so counts span 32,002–32,265 across arms
+(~0.6%). Arms share **events** (19,722), not jets. Too small to move an IQR whose σ_stat is
+0.0008–0.0012, and no verdict changes — but the headers now name the arm they quote and print
+the across-arm range. Relevant to the model-size study's P0.1, which wants per-bin jet counts.
+
+**3. The `--cpus-per-task` sensitivity run (job 40516325) measured the wrong thing.** It used
+`taskset -c 0-15` inside the allocation. **SLURM does not hand out CPUs 0–15** — a diagnostic
+(job 40520538) shows a 16-CPU allocation landing on `[83, 84, 86, 88, ..., 101]`, scattered and
+non-contiguous. `taskset` then yields the *intersection*, which on that node was 7 CPUs for both
+the "16" and "8" cells and 4 for the "4" cell. So the six cells were 7/7/4 cores with
+`num_workers` 16/8/4, not the labelled 16/8/4 cores.
+
+What survives: the "16" and "8" cells had identical cores and differed only in workers, and gave
+**identical throughput** (4267 samples/s device, 1135/1138 host) — 16 dataloader workers buy
+nothing over 8. The host arm is flat throughout; its bottleneck is the solve, not the pipeline.
+
+**Redo without `taskset`**: vary the matcher's `N_JOBS` through the existing override in
+`submit_phase0_matcher_share_b200.sh` and hold `num_workers` fixed. That tests the matcher's core
+appetite directly. If affinity control is ever genuinely needed, subset the *allocated* IDs
+(`sorted(os.sched_getaffinity(0))[:n]`), never absolute ones.
+
+> An earlier draft of this entry claimed the container sees only ~7 CPUs regardless of the
+> request, and inferred that `n_jobs: 16` has been oversubscribing every training run. **That is
+> withdrawn.** Every cell in that job had `taskset` applied, so there was no control; the 7 was
+> the artefact. Normal runs use no `taskset` and get all 16.
+
+### Block size 32 confirmed in training: +4.35% over two allocations (2026-08-28, jobs 40533246, 40534109)
+
+The offline sweep's 10% was measured replaying a dumped tensor on an idle GPU. This is the same
+question asked inside a real training step, where the solver shares the GPU with the model —
+the distinction that made Phase 3 necessary after JV's 10.5× offline became 2.3–3.1× in
+training. Both cells in one allocation on one node, own Inductor cache each, 50 measured steps
+after warmup, `configs/clic_v6_cudamatch.yaml` + `profile_phase0.yaml`.
+
+| | block 128 (default) | block 32 |
+|---|---:|---:|
+| median step | 534.64 ms | **512.03 ms** |
+| step std | 13.09 ms | 10.59 ms |
+| throughput | 3831 samples/s | **4000 samples/s** |
+| solver fallbacks | 0 | 0 |
+
+**−22.60 ms/step, +4.41%**, bootstrap sd on the difference of medians 4.48 ms, **z = +5.3**, with
+the sign reversed in **0 of 2000** draws.
+
+**Confirmed in a second allocation, on a different node, with the cell order reversed** (job
+40534109, `ORDER=bs32_first`, c1004a-s25 against the first run's c0909a-s25):
+
+| | block 128 (default) | block 32 |
+|---|---:|---:|
+| median step | 532.56 ms | **510.71 ms** |
+| throughput | 3846 samples/s | **4010 samples/s** |
+
+−21.86 ms, **+4.28%**, z = +5.4, sign again never reversed. The order alternation is the point:
+had the win been within-job drift — a node warming up, a neighbour starting — it would follow
+the *position* of the cell rather than the block size, and reversing the order would reverse the
+sign. It did not.
+
+**Deployed and verified on the production path (job 40538140, c0901a-s15, a third node).** The
+first two allocations went through the *candidate* tree; this one ran after the swap, so it
+exercises the binary training actually loads: 535.43 → 512.14 ms, **+4.55%**, z = +5.9.
+
+**Across three allocations: +4.41%, +4.28%, +4.55%, mean +4.41%** — which meets this study's own
+standard of three for a throughput claim, the same bar Phase 3 was held to. Larger than the ~2.5% predicted from
+scaling the offline 17.3 ms solve delta — plausibly because leaving 68 of 148 SMs idle during the
+solve also disturbs the kernels around it. Note the reproducibility is the device arm's signature
+again: the two nodes agree to 0.3%, exactly as Phase 3 found (device 0.8% spread, host 32%).
+
+Reproduce with `compare_blocksize_phase0.py <jobid>`.
+
+#### ⚠️ `MatcherTimer`'s `device` bucket is inert on a device arm — do not read it
+
+The `device` bucket reports **1.54 ms in both cells**, against a kernel the profiler measures at
+172.7 ms. That is not a bug in the timer, it is §6's `solved=None` contract working as designed:
+JV cannot fail to converge, so the post-solve `torch.cuda.synchronize()` is deliberately skipped
+to avoid handing back the host stall the device path exists to remove. The kernel is therefore
+still in flight when the timer stops, and its cost lands in `other` by subtraction — visibly so,
+`other` moving 533.10 → 510.38 ms, −22.72 ms, matching the step delta almost exactly.
+
+**Consequence: Phase-0 bucket attribution is only valid on HOST arms.** Every past Phase-0 number
+in this study is a host arm, so nothing on record is affected. But a device-arm timing file
+understates the solve by ~100×, and nothing said so until now. Read the step time.
+
+#### The candidate binary
+
+`vendor/torch-linear-assignment-candidate`, built by `build_tla_candidate.sh` in **2 min 2 s** on
+a 1-CPU node. It is the first tree with all three properties at once, which is why this test could
+not have been run before it existed:
+
+| tree | ABI | arch | patch |
+|---|---|---|---|
+| `-default` (production) | default 2.9.1 | sm_100 | no |
+| `-blocksize` | clic 2.10 | sm_100 | yes |
+| `-multiarch` | default 2.9.1 | sm_89 + sm_100 | no |
+| **`-candidate`** | **default 2.9.1** | **sm_89 + sm_100** | **yes** |
+
+Only the `.cu` was taken from `-blocksize`. That tree's `setup.py` also carries a `compat_include`
+shim for a supposedly truncated `ctc_loss_ops.h` in the `clic` env; that header turned out to be
+intact (verified against torch's own RECORD manifest, 11,783 files, 0 corrupt) and `default`
+never had the problem, so the shim was deliberately **not** carried over — it would have shadowed
+a torch 2.9.1 header over a 2.10.0 install.
+
+> Build-script trap worth keeping: the verification step originally ended with
+> `strings -a "$SO" | grep -q TLA_BLOCK_SIZE || exit 1` under `set -o pipefail`. `grep -q` exits
+> on the first match, `strings` then takes SIGPIPE, and the pipeline reports failure **exactly
+> when the string is present**. It reported a false build failure on a correct binary. Use
+> `grep -c` into a variable, which reads all of its input.
+
+
+### Deployment, 2026-08-28
+
+`vendor/torch-linear-assignment-default` — the tree every training run loads — was replaced with
+the candidate build. The original is kept verbatim as
+`torch-linear-assignment-default-preblocksize-20260828`; its md5 `dd963a970a9f` matches the
+production binary's md5 recorded independently earlier in the day, so the rollback copy is
+confirmed genuine rather than something overwritten in passing. **Reverting is one `mv`.**
+
+| | arch | patch | md5 |
+|---|---|---|---|
+| new production | sm_89 + sm_100 | yes | `948d01ef506b` |
+| rollback copy | sm_100 | no | `dd963a970a9f` |
+
+The swap also fixes something unrelated to speed: production can now run on **L4 as well as
+B200**. Before this it was sm_100-only, which is why §6's L4 condition was not merely unscheduled
+but unrunnable.
+
+`export APPTAINERENV_TLA_BLOCK_SIZE=32` is set in the two device-training scripts
+(`submit_phase4_device_training_b200.sh`, `studies/model_size/submit_v7_cudamatch_training_b200.sh`)
+and **nowhere else**:
+
+- **Not in a shared profile.** 32 was tuned for the B200's 148 SMs; an L4 has 58 and an eighth of
+  the problems. An exported value would follow a job onto hardware where it has never been
+  measured.
+- **Not in `submit_paired_device_matcher_b200.sh`.** That is the Phase-3 *measurement* script, and
+  changing its device arm would make future runs incomparable with the recorded 4231 samples/s.
+  Measurement scripts should keep measuring what they measured.
+
+Everything else — the L4 path, the offline benches, the paired A/B — still gets 128 through the
+unchanged `SMPCores()` fallback, because the patch is inert unless the variable is set. That is
+what made the swap safe to do before the flag was turned on anywhere.
+
+> **Open, carried to 2026-08-29 (README next steps §3): the block size is switched on by an
+> environment variable, and it fails open.** `device_solver: jv` comes from the config;
+> `TLA_BLOCK_SIZE=32` comes from the environment, set in two submit scripts. The two are
+> decoupled, so any *new* submit script gets the device matcher at block 128 and silently loses
+> the 4.4% — no error, no warning, just the old number. The fix is to add the missing
+> compute-capability major-10 case to `SMPCores()` so a B200 returns 32 by construction; an L4
+> keeps 128 via its existing Ada branch. Until then, **copy an existing script rather than
+> writing one from scratch** — which is what today's hand-off to a second session was told to do.
+
+---
+
+## 2026-08-30 — "how different are they, really?": the inline shadow run
+
+**The question**, from a colleague reading the Phase-4 A/B: *technical metrics like the matching
+quality of the algorithm, or intersection-over-union of GPU matcher vs CPU matcher, so we can
+start quantifying how "different" they are.*
+
+The study cannot answer it, and the reason is worth writing down, because it is a hole in the
+shape of the evidence rather than a missing number.
+
+**Two kinds of evidence, and the gap between them.** At the bottom there is
+[`bench_device_matcher.py`](bench_device_matcher.py): on one dumped step's real cost tensors,
+does the device solver reach the same *total cost* as scipy's float64 optimum? One scalar, one
+step, and silent about *which* pairing was chosen. At the top there is Phase 4: two full
+trainings compared on val loss, jet-E IQR and efficiency/fake-rate/purity. That is what anyone
+actually cares about, but it is a **terminal** measurement — it sits downstream of ~10⁵ optimiser
+steps, so any difference is entangled with SGD nondeterminism, data order and seed noise.
+Overlapping IQR curves are evidence of neutrality, but weak evidence: they can hide a real solver
+difference under training noise, and they can equally *manufacture* one that has nothing to do
+with the matcher. Neither layer answers "how different are the two matchings".
+
+What is missing is the middle: given **identical cost matrices**, how often do the two solvers
+return the same assignment, and when they don't, how much worse is the one the GPU picked. That
+is a paired, per-problem measurement with essentially no statistical uncertainty, and it
+decouples *the solver is different* from *the training diverged because SGD is chaotic*.
+
+### The three metrics, and why it takes three
+
+1. **Optimality gap — "matching quality of the algorithm".** The matcher minimises total
+   assignment cost, so quality is `cost(device permutation) − cost(host optimum)`, per problem,
+   evaluated in float64 on the same host cost array for both sides. **This is a
+   solver-correctness check and nothing more.** The cost matrix is detached before the matcher
+   ever sees it (`maskformer.py:309`, and `Task.cost` detaches again inside), and its only
+   consumer is the assignment problem — no gradient flows through a cost, ever. A zero gap says
+   the device solver found an optimal assignment, which is what makes any disagreement with the
+   host a disagreement between *equally optimal* assignments rather than a degradation of the
+   matching objective. It says nothing about whether the two runs train the same; that is
+   metric 2's job. For `jv` — exact Jonker-Volgenant — this is a null check and is expected to
+   be identically zero. It would be nonzero only for the auction, bounded by
+   `num_valid_targets × eps`.
+
+2. **Assignment agreement / IoU — "how different are they", and the metric that actually bears
+   on training.** The permutation is the **only** channel through which the matcher reaches the
+   loss: it decides which query's outputs are scored against which target, and everything
+   downstream follows from that. Identical permutation ⇒ identical loss ⇒ identical gradient.
+   A different permutation changes the gradient *even when the two assignments cost exactly the
+   same*.
+
+   Equal cost does **not** imply equal permutation — and it does not imply equal loss either,
+   because the cost is a deliberate **proxy** for the loss rather than the loss itself. In
+   `clic_v6_maskfix.yaml` the matching is scored with `mask_dice` alone (`mask_bce` is
+   commented out in the `costs:` block) while the objective is `mask_bce_v2: 5.0` plus
+   `mask_dice_v2: 1.0`. So even a *provably optimal* assignment is optimal for a surrogate.
+
+   Both solvers return a set of (query slot, target) pairs; the IoU of those two sets is
+   `agree / (2n − agree)`, with `agree` the shared-pair count and `n` the valid targets. Real
+   mask-BCE costs are highly degenerate — many near-equal entries, ties within fp32 — so two
+   *exact* solvers routinely disagree on the permutation while agreeing exactly on the total.
+   That is invisible to metric 1, which is exactly why it needs its own number. Alongside it,
+   `tie_gap`: for each disagreeing target, the cost difference between the entry the device
+   solver took and the one the host solver took. If those are ~0, the disagreement is a coin
+   flip between equals — *by the matcher's own criterion*. Whether the model cares is metric 3.
+
+   So the pair is deliberate: **metric 1 says whether the GPU solved the problem it was given,
+   metric 2 says whether the answer that reaches the model is a different one.** Reporting only
+   the first is what makes people suspicious, and it would also be the less relevant of the two.
+
+3. **Mask IoU of the disagreements — does the difference mean anything physically.** Metric 2
+   establishes that the gradient differs; it does not say whether the difference matters. So for
+   the pairs where the two solvers disagree, compare the mask IoU of the *assigned prediction against its truth particle*
+   under each assignment. If those two distributions coincide, the matchings are physically
+   interchangeable however much the permutations differ — a far stronger statement than
+   overlapping jet-E IQR curves, and made at the level of the object the matcher actually pairs
+   up. An equal-sized sample of *agreeing* pairs is scored beside them as a control, to give the
+   numbers a scale: the typical mask IoU of a matched pair in this model at this step.
+
+### Why inline, and not a replay of a dumped cost tensor
+
+The replay is cheaper — `MatcherCostDump` and `bench_device_matcher.py --costs` already exist —
+but there is one question it cannot answer: **does agreement drift as the model sharpens and its
+costs become less degenerate?** A dumped tensor is one point in training. And the comparison
+cannot be got by diffing the two *existing* Phase-4 trainings step for step: after step 1 the
+weights diverge, so the cost matrices differ, and any assignment difference is a difference in
+the model rather than in the solver. The comparison has to be paired on identical inputs, which
+inline gives for free, on ~970 points across the schedule.
+
+### The measurement cannot alter the training it rides on
+
+This is the property that makes the run dual-purpose, so it is worth being explicit about how it
+is bought. The production `Matcher.forward` call is left **completely untouched** and still
+produces the permutation the loss uses; the shadow solve runs beside it, on the same inputs, and
+its result is thrown away. The device path is re-solved rather than reused for exactly this
+reason. No torch RNG is touched, and the matcher's own `step` and `device_fallbacks` counters are
+saved and restored around the shadow solve. So the job is simultaneously the measurement and a
+valid device arm on the same 200-epoch schedule as Phase 4 — a second seed of it, if one is ever
+wanted.
+
+### What was built
+
+- [`src/hepattn/callbacks/matcher_shadow.py`](../../../../../callbacks/matcher_shadow.py) —
+  `MatcherShadow`. Wraps `Matcher.forward` to run the comparison before handing the call
+  through, and wraps `MaskFormer._match_and_permute_outputs` to reach the predicted masks
+  *before* that method permutes them in place (the matcher call happens inside it, so the
+  ordering works out). Writes one JSON line per shadow step, appended as it goes, so a killed
+  job still leaves everything measured up to the point it died; the headline numbers also go to
+  the logger under `shadow/*`. Distributions are stored as quantiles (min / 1% / median / 99% /
+  max / mean), which is a few hundred bytes a step instead of 10,240 floats.
+- [`configs/shadow_matcher.yaml`](../../../configs/shadow_matcher.yaml) — overlay on
+  `clic_v6_cudamatch.yaml`. `interval: 100`, `warmup: 50` (past `torch.compile`),
+  `reference_solver: scipy` with `n_jobs: 16`, `max_mask_pairs: 4096`. The callbacks list is
+  respecified in full rather than appended to, because jsonargparse *replaces* lists across
+  `--config` layers — the same reason `dump_matcher_costs.yaml` restates it.
+- [`submit_shadow_matcher_b200.sh`](submit_shadow_matcher_b200.sh) — copied from the Phase-4
+  device script, per the 2026-08-28 warning about hand-written submit scripts silently losing
+  `TLA_BLOCK_SIZE=32`.
+
+Validated on CPU before submitting, with `device_solver: auction` (the only device solver that
+runs without a GPU) on a stub model with deliberately tied costs: the record is populated end to
+end, `matcher.step` advances by exactly one per forward and `device_fallbacks` by only what the
+production call itself incurs, and the mask-IoU layer separates the two solvers' choices when the
+predicted masks actually differ. Costs a CPU minute; would have cost a queue slot to find out
+otherwise.
+
+### Submitted
+
+**Job 40640611**, `clic-shadow-matcher-b200`, submitted 2026-08-30. Output lands in
+`logs/clic_v6_cudamatch_shadow_<timestamp>/matcher_shadow.jsonl`.
+
+> **The first attempt, job 40639789, died 2 minutes in — and the trap is worth keeping.**
+> `TypeError: 'NoneType' object is not callable` at `attention.py:292`, i.e. flash-attn's varlen
+> entry point is `None`, in the encoder, during sanity check. Nothing in the traceback mentions
+> the environment. The cause: `#SBATCH --export=ALL` exports the *submitting shell*, and that
+> shell was inside `pixi shell -e clic` — `PIXI_ENVIRONMENT_NAME=clic`, `PIXI_IN_SHELL=1`, a
+> clic-first `PATH`. Apptainer passes those straight through, so the bare `pixi run` inside the
+> container resolved to the **clic** env (torch 2.10) instead of **default** (torch 2.9.1). The
+> log is the giveaway: every path in the traceback reads `.pixi/envs/clic/...`, where a healthy
+> run reads `.pixi/envs/default/...`.
+>
+> This is not new. Model-size jobs **40540644-47** all died the same way and were silently
+> re-run as 40541594/40543199/etc.; the failure was never written down, so it cost a second
+> diagnosis. **The fix is in the script, not in the habits of whoever submits it:**
+> `pixi run -e default`. Grep for a bare `pixi run` in the other training scripts before
+> trusting one — `submit_phase4_device_training_b200.sh` and both `studies/model_size`
+> training scripts still have it, and they will fail exactly this way when submitted from a
+> `pixi shell -e clic`. Same family as the 2026-08-28 `TLA_BLOCK_SIZE` note: **a script that
+> depends on the ambient environment fails open.**
+
+**What to expect, written down before the measurement.** `jv` is exact, so the honest prediction
+is: **cost gap identically zero, permutation agreement well below 100%**, with the disagreements
+concentrated on cost-degenerate pairs (`tie_gap` ≈ 0) and their mask-IoU distributions
+indistinguishable. If that is what comes back, the answer to the colleague is that the two
+matchers *disagree on the permutation, are equally optimal by the matching objective, and pair
+up predictions and particles that are physically indistinguishable* — so the gradients they
+produce are not identical, but the difference is the same kind of arbitrariness as a tie-break,
+not a change in what the model is being taught. And the Phase-4 IQR overlap stops being the
+load-bearing evidence for it.
+
+The readings that would be genuine news, in descending order of how much they would matter:
+
+| observation | what it would mean |
+|---|---|
+| cost gap > 0 anywhere | `jv` is not exact on real costs — the whole device arm is in question |
+| `tie_gap` ≫ 0 on disagreements | the swaps are between genuinely unequal pairings, not ties |
+| mask-IoU distributions separated | the disagreement is physical, not bookkeeping |
+| agreement drifting with step | degeneracy is a property of early training, and the late-training regime is the one to trust |
+
+---
+
+## 2026-09-01 — what a disagreement actually is: two particles the detector cannot separate
+
+Job 40640611 finished the full 200 epochs (11 h 42 m) and
+[`plot_shadow_matcher.py`](plot_shadow_matcher.py) turned its 971 shadow steps into three
+figures. Over epochs 150–199:
+
+| | |
+|---|---|
+| worst optimality gap | **4.77e-07** — Phase 1's number again; exactly zero at 630 of 971 steps |
+| pairs disagreeing | **0.058%** (5.9 per 10,000), down 77× from 4.5% at epoch 0 |
+| problems matched identically | 98.8% |
+| constituent overlap, GPU / CPU / agreeing-pair control | 0.5824 / 0.5824 / 0.7895 |
+| median solve speedup on identical problems | 19.4× |
+
+The prediction written down on 2026-08-30 was right about the gap and wrong about the ties, and
+the truth is stronger than the prediction. **`tie_gap` is not ~0** — the per-pair cost difference
+between the two solvers' choices *grows* through training to a median of ~0.33, while the total
+per problem stays at fp32 noise. Both are true at once because the disagreements are **cycles
+through alternative global optima**, not near-ties.
+
+### The measurement that looked too good, and the check it forced
+
+Panel 3 — the constituent overlap of each solver's choice — came out as a *single line*. That is
+suspicious rather than reassuring, and it was challenged. From the .jsonl alone: the two
+distributions are **bitwise identical at q0.01, q0.5 and q0.99 at 100% of converged steps**, and
+the per-step mean agrees to **~1e-9**, while 66% of individual swapped pairs move by more than
+0.01. Independent signs would put the per-step mean near 2.4e-2. Seven orders of magnitude is
+not cancellation by chance.
+
+Quantiles cannot settle a claim about the *joint* distribution, so `MatcherShadow` gained an
+opt-in `raw_dump_steps` (default 0) that writes the per-pair arrays, and two short jobs ran the
+converged epoch-198 checkpoint for three steps each — **40705257** (queries, IoUs, costs) and
+**40779831** (adding the bit-packed truth constituent mask and every per-particle scalar). Each
+took 5–10 minutes: `fit --ckpt_path` resumes at epoch 199, `limit_train_batches=3` cuts the
+epoch to three steps, and [`configs/shadow_raw_dump.yaml`](../../../configs/shadow_raw_dump.yaml)
+drops the Checkpoint and PredictionWriter callbacks so the original run directory is untouched.
+[`analyse_shadow_raw.py`](analyse_shadow_raw.py) reproduces everything below in a second.
+
+### How two targets can own the same constituents
+
+The constituents are **reconstructed** objects — tracks and topological calorimeter clusters —
+not truth-level information. `pflow_data.py` builds every node feature as
+`torch.cat([track_values, topo_values])`. A truth particle's mask answers *which reconstructed
+objects did this particle contribute to*. So if two truth particles' showers merge into a single
+topocluster, both masks are literally `{that one cluster}` and nothing in the network's input
+distinguishes them. This is the particle-flow confusion limit showing up in the matcher.
+
+**Charged particles cannot do this.** A reconstructed track belongs to exactly one particle, so
+it is a constituent unique to that particle. The degeneracy is confined to neutrals, which reach
+the network only through clusters — and clusters merge. The data agrees: over 292 transpositions,
+
+| | |
+|---|---|
+| the two targets own the **same** constituents | **100.0%** (bit-compared, not inferred) |
+| constituents per target | 199 own exactly **1**, 45 own 2, 13 own 0 |
+| class pairing | **photon + photon 79.9%**, neutral hadron + neutral hadron 17.6%, mixed 2.5% |
+| charged hadron / electron / muon | **never** |
+| energy | softer median **0.70 GeV**, harder **2.01 GeV**, ratio 2.1×; only 10% within 10% |
+
+80% photon+photon at a ~2:1 energy ratio is the π⁰ → γγ signature — consistent with it, not
+proof of it. Note the particles are genuinely *different* (a factor 2 in energy); what they share
+is only what the detector reconstructed.
+
+A worked example, from `matcher_shadow_raw_raw_step0.npz`, problem 97:
+
+```
+                     particle 28          particle 32
+  GPU assigns    query 117 → IoU 0.33   query 130 → IoU 1.00
+  CPU assigns    query 130 → IoU 1.00   query 117 → IoU 0.33
+```
+
+Per particle the difference is large — for particle 28 the CPU's choice is far better. But query
+130 has IoU 1.00 against *both* particles, which means its predicted set equals both truth sets,
+which means the two truth sets are equal. One good query, one mediocre query, two particles the
+constituents cannot tell apart: whichever way it goes, one particle gets the good query and the
+other the mediocre one, for the same total. **Neither solver is wrong, and panel 3's mean cancels
+the per-particle differences exactly.**
+
+This generalises beyond transpositions. Of the 356 disagreeing problems in the three dumped
+steps, 292 have exactly two disagreeing targets and 64 have three or more (up to 24). In
+**100.0% of all 356**, every disagreeing target shares its truth mask with another disagreeing
+target in the same problem — so the whole disagreement is always confined to a group the
+constituents cannot separate. (13 problems, 3.7%, are the degenerate case where the targets own
+*no* constituents at all.)
+
+### The layer split, which closes the remaining caveat
+
+The worry left open was that two same-mask particles can still differ in energy, so the swap
+would hand the regression head a different target. Splitting the disagreements by which of the
+five matched cost sets they came from, over the three dumped steps:
+
+| layer_0 | layer_1 | layer_2 | layer_3 | **final** |
+|---|---|---|---|---|
+| 152 | 284 | 248 | 232 | **2** |
+
+**Two of 918.** The four in-loop layers cost `2·class_CE + 1·mask_dice`, which is blind to
+energy, so two same-mask same-class neutrals are exactly tied there and the solvers split the
+tie arbitrarily. The final cost set adds `10·regression_L1 + KL`, which sees the factor-2 energy
+difference and breaks the tie. **The assignment that produces the actual output is essentially
+always unique and both solvers agree**; only deep supervision at the intermediate layers differs,
+and even there both choices are exactly optimal under the cost being minimised.
+
+> **Correction to the 2026-08-30 entry and to `matcher_shadow.py`'s docstring:** v6 does **not**
+> match on `mask_dice` alone. The resolved config carries `classification: costs: object_ce: 2.0`
+> as well, so class information is already in the intermediate cost — which is why the swapped
+> particles share a class in 97.6% of cases rather than merely a mask.
+
+> **Terminology.** The constituents are **not** detector hits. They are reconstructed tracks and
+> topological calorimeter clusters. `hit` is a name inherited from the tracking experiments and
+> is a misnomer here; it should not appear in figures or slides.
+
+### What panel 3 is worth — a verdict corrected
+
+The first draft of this entry called panel 3 "correct but weak evidence", on the grounds that
+the overlap distribution is invariant under a constituent-identical swap *by construction*, so
+the panel could not have shown a difference. **That argument is circular** — it uses the
+conclusion to dismiss the evidence that produced it. Before the dumps, a difference in panel 3
+was entirely possible; that it did not appear is a result, not a tautology.
+
+What the panel's *numbers* establish on their own, from the .jsonl and nothing else:
+
+- the two distributions are **bitwise identical at every stored quantile at 100% of converged
+  steps**, and the means agree to ~1e-9;
+- yet **66% of individual swapped pairs move by more than 0.01** (`interchangeable` ~ 0.34 in
+  the same file).
+
+Exact multiset invariance *with* non-zero per-pair movement leaves exactly two possibilities:
+either the two queries score identically on each target — excluded, since that would force the
+per-pair delta to zero — or **each query scores identically against both swapped targets**. That
+is the substance of the result, and the shadow run reaches it unaided. The dumps were not what
+discovered it.
+
+Three things panel 3 genuinely cannot reach, which is what the dumps were for: that the equality
+is at the level of the truth mask's **bit pattern** rather than a coincidence of overlaps on the
+two queries involved (100%); **which particles** these are (neutrals, 80% photon pairs, a factor
+2 apart in energy); and the **layer split** that keeps it out of the final assignment.
+
+The one limitation that does survive is presentational, not evidential. **The drawn figure shows
+two overlapping lines, which at plot resolution is equally consistent with agreement at 1e-2 —
+which would prove nothing.** All the force is in the exactness, seven orders of magnitude below
+chance cancellation, and a line plot cannot display that. The fix is to put the number on the
+panel, not to demote the panel.
