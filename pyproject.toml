@@ -90,7 +90,7 @@ torch = { version = "==2.9.1", index = "https://download.pytorch.org/whl/cpu" }
 default = { features = ["gpu", "fa2"] }
 isambard = { features = ["gpu"] }
 cpu = { features = ["cpu"] }
-clic = { features = ["clic"] }
+clic = { features = ["gpu", "fa2", "clic"] }
 tide = { features = ["tide"] }
 ci = { features = ["cpu", "clic", "tide"]}
 
