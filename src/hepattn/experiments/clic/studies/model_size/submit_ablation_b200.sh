@@ -21,7 +21,8 @@
 #SBATCH --ntasks-per-node=1        # must match trainer.devices
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=60G
-#SBATCH --time=96:00:00
+#SBATCH --time=09:59:00          # the 702k head-v7 model took 7 h 40 m at this geometry (job 40405423);
+                                  # per-epoch checkpoints with save_last make a timeout resumable
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=mmazza@fsu.edu
 #SBATCH --output=/blue/avery/m.mazza/projects/fastml/hepattn-paper/src/hepattn/experiments/clic/slurm_logs/slurm-%j.%x.out

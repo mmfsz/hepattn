@@ -81,5 +81,6 @@ brought over from `main`'s study once the first results exist.
 | C3 a2a3 | 41750170 | | 41750169 | queued 2026-09-11 |
 | C1 a2a3a4 | 41750172 | | 41750171 | queued 2026-09-11 |
 
-All ten submitted 2026-09-11 against commit 47645e1 of `clic-paper-main`. If a pre-flight fails,
+All ten submitted 2026-09-11 against commit 47645e1 of `clic-paper-main`; each full run is chained
+`afterok` behind its pre-flight (30 min), and the full runs were trimmed to 9 h 59 m on the B200. If a pre-flight fails,
 cancel the matching full run (`scancel <job>`), fix, resubmit both.
