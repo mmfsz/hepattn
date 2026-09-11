@@ -112,6 +112,7 @@ copy a `--time` line from another script. The measurements on this code, all 200
 | paper model, 12.1M (`base.yaml`) | 6x L4 (2 nodes), batch 170/GPU | scipy | 19 h 05 | 25 h | 37233919 (paper clone) |
 | small, 0.82M (`base_small.yaml`) | 3x L4, batch 170/GPU x 2 accumulation | scipy | 20 h 02 | 27 h | 39236741 (paper clone) |
 | small | 1x B200, batch 2048 | `device_solver: jv` | **projected 10.4 h** from 367 ms/step over 300 steps (5,582 samples/s) | 14 h | 41755907; first full run pending |
+| small | 1x B200, batch 2048 | host `lap1015_late` | 1,591 ms/step over 300 steps, 84% in the host solve (projected 45 h) | do not use on a B200 | 41755775 |
 | small | 3x L4, batch 170/GPU x 2 accumulation | `lap1015_late` | pending | | 41750149 |
 
 For orientation only, the head-based v7 model (0.70M) at the B200 geometry took 6 h 28 to
