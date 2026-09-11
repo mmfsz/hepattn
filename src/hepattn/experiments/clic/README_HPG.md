@@ -111,12 +111,13 @@ copy a `--time` line from another script. The measurements on this code, all 200
 |---|---|---|---|---|---|
 | paper model, 12.1M (`base.yaml`) | 6x L4 (2 nodes), batch 170/GPU | scipy | 19 h 05 | 25 h | 37233919 (paper clone) |
 | small, 0.82M (`base_small.yaml`) | 3x L4, batch 170/GPU x 2 accumulation | scipy | 20 h 02 | 27 h | 39236741 (paper clone) |
-| small | 1x B200, batch 2048 | `device_solver: jv` | **projected 24 h** from the first epochs (7 min/epoch) | 31 h | 41750147, running 2026-09-11 |
+| small | 1x B200, batch 2048 | `device_solver: jv` | **projected 10.4 h** from 367 ms/step over 300 steps (5,582 samples/s) | 14 h | 41755907; first full run pending |
 | small | 3x L4, batch 170/GPU x 2 accumulation | `lap1015_late` | pending | | 41750149 |
 
 For orientation only, the head-based v7 model (0.70M) at the B200 geometry took 6 h 28 to
 7 h 40 with the GPU matcher and 23 h 15 with the host matcher (`main`, README_HPG.md there).
-The paper's code is not expected to match those numbers.
+The paper's code matches them once the encoder and decoder are compiled separately (the
+paper's callback compiled the whole model as one graph and stepped 2.2x slower on a B200).
 
 **No measurement for your case?** Run a preflight and project. Submit the training script
 with a short step cap and a short limit, then read the projection off its log:

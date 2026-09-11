@@ -1,0 +1,9 @@
+# Diagnostic overlay: host matcher (threaded lap1015) at the B200 geometry, passed AFTER the
+# driver's matcher_jv.yaml so it wins.
+model:
+  model:
+    init_args:
+      matcher:
+        init_args:
+          device_solver: null
+          default_solver: lap1015_late

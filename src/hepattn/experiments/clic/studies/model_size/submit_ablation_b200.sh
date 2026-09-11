@@ -21,8 +21,10 @@
 #SBATCH --ntasks-per-node=1        # must match trainer.devices
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=60G
-#SBATCH --time=09:59:00          # the 702k head-v7 model took 7 h 40 m at this geometry (job 40405423);
-                                  # per-epoch checkpoints with save_last make a timeout resumable
+# --time: 1x B200, jv matcher, 200 epochs of the paper's small model: 367 ms/step measured over
+# 300 steps (job 41755907, 2026-09-11) x 486 steps x 200 epochs = 9.9 h, +5% validation = 10.4 h;
+# 1.3x rounded up to the hour. Replace with the wall time of the first completed run.
+#SBATCH --time=14:00:00
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=mmazza@fsu.edu
 #SBATCH --output=/blue/avery/m.mazza/projects/fastml/hepattn-paper/src/hepattn/experiments/clic/slurm_logs/slurm-%j.%x.out
