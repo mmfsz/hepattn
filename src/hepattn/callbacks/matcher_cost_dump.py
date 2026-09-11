@@ -75,9 +75,10 @@ class MatcherCostDump(Callback):
     def _capturing(self, fn):
         """Wrap ``Matcher.forward`` so every call on the chosen step keeps its inputs.
 
-        ``MaskFormer.loss`` calls the matcher once per decoder layer, so the calls of one step
-        are stacked layer-major at the end of the step into the single ``[layers x batch, ...]``
-        tensor the replay tools expect.
+        ``MaskFormer.loss`` calls the matcher once per step with every decoder layer stacked
+        layer-major along the batch axis, which is already the ``[layers x batch, ...]`` layout
+        the replay tools expect; concatenating the step's calls keeps that true for a model that
+        calls it more than once.
         """
 
         def wrapper(costs, object_valid_mask=None, query_valid_mask=None, *args, **kwargs):
