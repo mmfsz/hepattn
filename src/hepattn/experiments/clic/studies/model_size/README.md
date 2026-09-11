@@ -68,7 +68,7 @@ Same protocol as `main`'s `STUDY.md` §4: jet-energy median and IQR versus jet e
 the host solver, compared with the paper's figures in the **`mpflow_proxy`** convention only, and a
 delta only counts when it clears the training-to-training scatter. **σ_repro has not been measured
 on this code**; the head numbers (0.0029 `mpflow`, 0.0007 proxy, n = 4 seeds) do not transfer.
-Evaluate with `submit_eval_run.sh` (fp32, torch attention, inference data). Plotting tools will be
+Evaluate with `submit_eval_l4.sh` (fp32, torch attention, inference data). Plotting tools will be
 brought over from `main`'s study once the first results exist.
 
 ## Run register
@@ -81,6 +81,13 @@ brought over from `main`'s study once the first results exist.
 | C3 a2a3 | 41750170 | | 41750169 | queued 2026-09-11 |
 | C1 a2a3a4 | 41750172 | | 41750171 | queued 2026-09-11 |
 
+The arm preflights were submitted without a distinguishing `--name`, so each arm has TWO run
+folders: the earlier one (12:15-12:24) is the preflight (`fast_dev_run`, no checkpoints), the
+later one (13:03 onwards) is the full run. Name preflights `pf_<run>` from now on.
+
 All ten submitted 2026-09-11 against commit 47645e1 of `clic-paper-main`; each full run is chained
-`afterok` behind its pre-flight (30 min), and the full runs were trimmed to 9 h 59 m on the B200. If a pre-flight fails,
+`afterok` behind its pre-flight (30 min), and the full runs were trimmed to 9 h 59 m on the B200 from the head-v7 measurement. That was
+wrong for this code: the first epochs run at 7 min each, i.e. 24 h for 200 epochs, so these
+runs will hit their limit near epoch 80 and must be resumed from `last.ckpt`. Diagnostic
+runs 41755411 (jv) / 41755412 (host) with `MatcherTimer` attribute the step time. If a pre-flight fails,
 cancel the matching full run (`scancel <job>`), fix, resubmit both.

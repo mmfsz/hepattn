@@ -29,9 +29,9 @@ sbatch --job-name=clic-ps-ref \
   studies/model_size/submit_ablation_b200.sh
 
 # 2. 3x L4 + lap1015
-sbatch --time=00:30:00 --job-name=pf-ps-l4 submit_training_hpg_l4.sh configs/base_small.yaml \
+sbatch --time=00:30:00 --job-name=pf-ps-l4 submit_training_hpg_l4.sh configs/base_small.yaml   # script since renamed submit_training_l4.sh \
   --config configs/matcher_lap1015.yaml --name pf_clic_paper_small_l4_lap1015 --trainer.fast_dev_run=true
-sbatch --job-name=clic-ps-l4 submit_training_hpg_l4.sh configs/base_small.yaml \
+sbatch --job-name=clic-ps-l4 submit_training_hpg_l4.sh configs/base_small.yaml   # script since renamed submit_training_l4.sh \
   --config configs/matcher_lap1015.yaml --name clic_paper_small_l4_lap1015
 ```
 
@@ -67,7 +67,7 @@ different code) at the same geometry and matcher: job **40405423**, 7 h 40 m on 
 2. Run 2's best val_loss lands within training-to-training scatter of 4.3716. σ_repro has not been
    measured on this code; on head, val_loss differed by ~0.01–0.03 between same-config runs.
 3. Run 2's proxy jet-E IQR **falls** with jet energy (the paper's shape), after evaluation with
-   `submit_eval_run.sh` and the `mpflow_proxy` convention.
+   `submit_eval_l4.sh` and the `mpflow_proxy` convention.
 4. Wall time of run 2 versus 20 h 02 m on identical hardware; wall time of run 1 versus 7 h 40 m
    for the smaller head model. Compare GPU-hours, never mix hardware.
 5. Both pre-flights complete without a launch error (the JV build imports and reports
