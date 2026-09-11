@@ -197,8 +197,8 @@ model:
                 pred_threshold: 0.1
                 logit_scale: 4
                 losses:
-                  mask_bce_v2: 5.0
-                  mask_dice_v2: 1.0
+                  mask_bce: 5.0
+                  mask_dice: 1.0
                 costs:
                   # mask_bce: 5.0
                   mask_dice: 1.0

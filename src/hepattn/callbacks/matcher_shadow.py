@@ -42,7 +42,7 @@ Three layers of metric, in increasing order of how much they mean and how much t
    Equal cost does not imply equal permutation, and it does not imply equal loss either --
    the cost is a deliberate *proxy* for the loss rather than the loss (the CLIC v6 config
    scores matching with ``mask_dice`` alone, while the loss it trains on is
-   ``mask_bce_v2 * 5 + mask_dice_v2``). Both solvers return a set of (query slot, target)
+   ``mask_bce * 5 + mask_dice``). Both solvers return a set of (query slot, target)
    pairs; the intersection-over-union of those two sets is ``agree / (2n - agree)`` where
    ``agree`` is the number of shared pairs and ``n`` the number of valid targets. Real
    mask-BCE costs are highly degenerate -- many near-equal entries, ties within fp32 -- so two
