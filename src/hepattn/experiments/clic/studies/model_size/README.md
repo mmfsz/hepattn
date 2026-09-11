@@ -75,8 +75,11 @@ brought over from `main`'s study once the first results exist.
 
 | Arm | Job | Run folder | Pre-flight | Status |
 |---|---|---|---|---|
-| reference (B200, jv) | | | | |
-| C5 a2a4 | | | | |
-| C4 a3a4 | | | | |
-| C3 a2a3 | | | | |
-| C1 a2a3a4 | | | | |
+| reference (B200, jv) | 41750147 | `clic_paper_small_b200_jv_*` | 41750146 | queued 2026-09-11 (submitted from `studies/paper_tag_baseline/`) |
+| C5 a2a4 | 41750166 | | 41750165 | queued 2026-09-11 |
+| C4 a3a4 | 41750168 | | 41750167 | queued 2026-09-11 |
+| C3 a2a3 | 41750170 | | 41750169 | queued 2026-09-11 |
+| C1 a2a3a4 | 41750172 | | 41750171 | queued 2026-09-11 |
+
+All ten submitted 2026-09-11 against commit 47645e1 of `clic-paper-main`. If a pre-flight fails,
+cancel the matching full run (`scancel <job>`), fix, resubmit both.
