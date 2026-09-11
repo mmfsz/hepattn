@@ -1,8 +1,12 @@
 #!/bin/bash
-# Evaluate one fixed checkpoint on 1 L4 (edit CKPT/RUN_DIR below, or use submit_eval_run.sh,
-# which takes them from the environment).
+# Parameterized CLIC eval: run inference from a run's checkpoint to produce
+# <ckpt>__test.h5 and (via PflowPredictionWriter) <ckpt>__test.root next to the ckpt.
+#
+# Submit with:
+#   sbatch --job-name=clic-eval-<tag> \
+#          --export=ALL,RUN_DIR=logs/<run_folder>,CKPT_NAME=<ckpt_file> \
+#          submit_eval_run.sh
 
-#SBATCH --job-name=clic-eval
 #SBATCH -p hpg-turin
 #SBATCH --account=avery
 #SBATCH --nodes=1
@@ -16,11 +20,16 @@
 #SBATCH --mail-user=mmazza@fsu.edu
 #SBATCH --output=/blue/avery/m.mazza/projects/fastml/hepattn-paper/src/hepattn/experiments/clic/slurm_logs/slurm-%j.%x.out
 
+: "${RUN_DIR:?export RUN_DIR=logs/<run_folder>}"
+: "${CKPT_NAME:?export CKPT_NAME=<ckpt_file>}"
+
 module load cuda/12.8.1
 export COMET_MODE=offline
 
 echo "Hostname: $(hostname)"
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
+echo "RUN_DIR: ${RUN_DIR}"
+echo "CKPT_NAME: ${CKPT_NAME}"
 nvidia-smi
 
 cd /blue/avery/m.mazza/projects/fastml/hepattn-paper/src/hepattn/experiments/clic/
@@ -28,19 +37,19 @@ echo "Working dir: ${PWD}"
 
 export TMPDIR=/var/tmp/
 
-RUN_DIR="logs/clic_paper_<timestamp>"
-CKPT="${RUN_DIR}/ckpts/<epoch=...ckpt>"
+CKPT="${RUN_DIR}/ckpts/${CKPT_NAME}"
 
+# configs/eval.yaml applies the README's evaluation rules (fp32, torch attention, inference data).
 PYTORCH_CMD="python main.py test \
   --config ${RUN_DIR}/config.yaml \
   --config configs/hpg.yaml \
   --config configs/eval.yaml \
   --trainer.devices=1 \
+  --trainer.num_nodes=1 \
   --ckpt_path $CKPT"
 
 PIXI_CMD="pixi run -e clic $PYTORCH_CMD"
 
-# No srun needed for single-GPU
 APPTAINER_CMD="apptainer run --nv --bind /blue/,/cmsuf/ /blue/avery/m.mazza/projects/fastml/hepattn-paper/pixi.sif $PIXI_CMD"
 
 echo "Running: $PYTORCH_CMD"

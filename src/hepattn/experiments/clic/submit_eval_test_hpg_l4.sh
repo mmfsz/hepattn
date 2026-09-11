@@ -1,17 +1,16 @@
 #!/bin/bash
-# Evaluate one fixed checkpoint on 1 L4 (edit CKPT/RUN_DIR below, or use submit_eval_run.sh,
-# which takes them from the environment).
+# Fast smoke test of the evaluation path (one batch) on 1 L4. Edit CKPT/RUN_DIR below.
 
-#SBATCH --job-name=clic-eval
+#SBATCH --job-name=clic-eval-test
 #SBATCH -p hpg-turin
 #SBATCH --account=avery
 #SBATCH --nodes=1
 #SBATCH --export=ALL
 #SBATCH --gres=gpu:l4:1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=50G
-#SBATCH --time=04:00:00
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=20G
+#SBATCH --time=00:30:00
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=mmazza@fsu.edu
 #SBATCH --output=/blue/avery/m.mazza/projects/fastml/hepattn-paper/src/hepattn/experiments/clic/slurm_logs/slurm-%j.%x.out
@@ -36,13 +35,10 @@ PYTORCH_CMD="python main.py test \
   --config configs/hpg.yaml \
   --config configs/eval.yaml \
   --trainer.devices=1 \
+  --trainer.fast_dev_run=1 \
   --ckpt_path $CKPT"
 
-PIXI_CMD="pixi run -e clic $PYTORCH_CMD"
-
-# No srun needed for single-GPU
-APPTAINER_CMD="apptainer run --nv --bind /blue/,/cmsuf/ /blue/avery/m.mazza/projects/fastml/hepattn-paper/pixi.sif $PIXI_CMD"
-
 echo "Running: $PYTORCH_CMD"
-$APPTAINER_CMD
+apptainer run --nv --bind /blue/,/cmsuf/ /blue/avery/m.mazza/projects/fastml/hepattn-paper/pixi.sif \
+  pixi run -e clic $PYTORCH_CMD
 echo "Done!"

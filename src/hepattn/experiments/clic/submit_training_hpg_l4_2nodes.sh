@@ -1,8 +1,8 @@
 #!/bin/bash
-# Train on 2 nodes x 3 L4 (6 GPUs) on HPG. Submit FROM this directory:
-#   mkdir -p slurm_logs
-#   sbatch submit_training_hpg_l4_2nodes.sh configs/base.yaml [extra main.py args...]
-# Extra arguments pass straight through, e.g. --name my_run or --trainer.max_epochs=2.
+# Train on 2 nodes x 3 L4 (6 GPUs) on HPG.
+# Submit FROM this directory:
+#   sbatch submit_training_hpg_l4_2nodes.sh <config.yaml> [extra main.py args...]
+# Extra arguments pass straight through to main.py, e.g. --name my_run or --trainer.max_epochs=2.
 
 #SBATCH --job-name=clic-train-l4-2nodes
 #SBATCH -p hpg-turin
@@ -14,33 +14,51 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=150G
 #SBATCH --time=168:00:00
-#SBATCH --output=slurm_logs/slurm-%j.%x.out
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=mmazza@fsu.edu
+#SBATCH --output=/blue/avery/m.mazza/projects/fastml/hepattn-paper/src/hepattn/experiments/clic/slurm_logs/slurm-%j.%x.out
 
 CONFIG_PATH="${1:?Usage: sbatch submit_training_hpg_l4_2nodes.sh <config.yaml> [extra args]}"
 shift
+echo "Using config: $CONFIG_PATH"
+
+# Load CUDA matching the container build
+module load cuda/12.8.1
 
 # Compute nodes have no internet / COMET_API_KEY: run the CometLogger offline.
 export COMET_MODE=offline
-export PATH="$HOME/.pixi/bin:$PATH"
 
+# Print host info
 echo "Hostname: $(hostname)"
+echo "CPU count: $(cat /proc/cpuinfo | awk '/^processor/{print $3}' | tail -1)"
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
-echo "git commit: $(git rev-parse HEAD)"
+echo "git commit: $(git -C /blue/avery/m.mazza/projects/fastml/hepattn-paper rev-parse HEAD)"
 echo "started: $(date -Is)"
+echo "nvidia-smi:"
 nvidia-smi
 
-cd "$SLURM_SUBMIT_DIR" || exit 1
-echo "Working dir: ${PWD}"
+# Move to workdir
+cd /blue/avery/m.mazza/projects/fastml/hepattn-paper/src/hepattn/experiments/clic/
+echo "Moved dir, now in: ${PWD}"
 
-# devices=3 x num_nodes=2 = 6 L4, matching the SBATCH allocation.
-# batch_size 170/GPU x 6 = global 1020, the paper's global batch (512 x 2 A100); a 24 GB L4
-# cannot hold 512/GPU. Override with --data.batch_size=N in the extra args if needed.
-PYTORCH_CMD="main.py fit --config $CONFIG_PATH --config configs/hpg.yaml \
+# Set tmpdir
+export TMPDIR=/var/tmp/
+
+# configs/hpg.yaml layers the HPG data paths over the model config, which keeps the
+# authors' paths. batch_size 170/GPU x 6 L4 = global 1020, the paper's global batch (512 x 2 A100); a 24 GB L4 cannot hold 512/GPU.
+# Override any of these through the extra arguments.
+PYTORCH_CMD="python main.py fit --config $CONFIG_PATH --config configs/hpg.yaml \
     --trainer.devices=3 --trainer.num_nodes=2 --data.batch_size=170 $*"
 
-# srun launches one task per GPU; run_task.sh gives each rank a private compile cache and
-# execs the command inside the pixi env.
-CMD="srun ./run_task.sh $PYTORCH_CMD"
-echo "Running: $CMD"
-$CMD
+# Pixi command that runs the python command inside the pixi env
+PIXI_CMD="pixi run -e clic $PYTORCH_CMD"
+
+# Apptainer command that runs the pixi command inside the pixi apptainer image.
+# srun in front for multi-GPU DDP; run_task.sh gives each rank a private compile cache.
+APPTAINER_CMD="srun ./run_task.sh apptainer run --nv --bind /blue/,/cmsuf/ /blue/avery/m.mazza/projects/fastml/hepattn-paper/pixi.sif $PIXI_CMD"
+
+# Run the final command
+echo "Running command: $APPTAINER_CMD"
+$APPTAINER_CMD
 echo "finished: $(date -Is)"
+echo "Done!"

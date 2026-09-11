@@ -1,24 +1,24 @@
 #!/bin/bash
-# Train on 1 node x 3 L4 on HPG.
+# Train on 1 node x 4 B200 on HPG.
 # Submit FROM this directory:
-#   sbatch submit_training_hpg_l4.sh <config.yaml> [extra main.py args...]
+#   sbatch submit_training_hpg.sh <config.yaml> [extra main.py args...]
 # Extra arguments pass straight through to main.py, e.g. --name my_run or --trainer.max_epochs=2.
 
-#SBATCH --job-name=clic-train-l4
-#SBATCH -p hpg-turin
+#SBATCH --job-name=clic-train
+#SBATCH -p hpg-b200
 #SBATCH --account=avery
 #SBATCH --nodes=1
 #SBATCH --export=ALL
-#SBATCH --gres=gpu:l4:3
-#SBATCH --ntasks-per-node=3        # must match trainer.devices
+#SBATCH --gres=gpu:b200:4
+#SBATCH --ntasks-per-node=4        # must match trainer.devices
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=150G
-#SBATCH --time=168:00:00
+#SBATCH --mem=300G
+#SBATCH --time=48:00:00
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=mmazza@fsu.edu
 #SBATCH --output=/blue/avery/m.mazza/projects/fastml/hepattn-paper/src/hepattn/experiments/clic/slurm_logs/slurm-%j.%x.out
 
-CONFIG_PATH="${1:?Usage: sbatch submit_training_hpg_l4.sh <config.yaml> [extra args]}"
+CONFIG_PATH="${1:?Usage: sbatch submit_training_hpg.sh <config.yaml> [extra args]}"
 shift
 echo "Using config: $CONFIG_PATH"
 
@@ -45,11 +45,10 @@ echo "Moved dir, now in: ${PWD}"
 export TMPDIR=/var/tmp/
 
 # configs/hpg.yaml layers the HPG data paths over the model config, which keeps the
-# authors' paths. batch_size 170/GPU x 3 L4 x 2 accumulation steps = global 1020, the paper's global batch with the same per-rank shape as the 6-GPU script (the loss is normalised per rank, so this averages the same way as 6 ranks of 170).
+# authors' paths. batch_size 256/GPU x 4 B200 = global 1024, the paper's global batch (the throughput studies on main used 2048/GPU).
 # Override any of these through the extra arguments.
 PYTORCH_CMD="python main.py fit --config $CONFIG_PATH --config configs/hpg.yaml \
-    --trainer.devices=3 --trainer.num_nodes=1 --data.batch_size=170 \
-    --trainer.accumulate_grad_batches=2 $*"
+    --trainer.devices=4 --trainer.num_nodes=1 --data.batch_size=256 $*"
 
 # Pixi command that runs the python command inside the pixi env
 PIXI_CMD="pixi run -e clic $PYTORCH_CMD"
