@@ -170,17 +170,27 @@ class MatcherShadow(Callback):
 
         def wrapper(costs, object_valid_mask=None, query_valid_mask=None, *args, **kwargs):
             if self._active:
-                # ``MaskFormer.loss`` calls the matcher once per decoder layer, in the order of
-                # its outputs, so the call index names the layer this comparison belongs to.
-                call = len(self._records)
-                layer = self._layer_names[call] if call < len(self._layer_names) else f"call{call}"
-                try:
-                    record = self._compare(matcher, costs, object_valid_mask, query_valid_mask, layer)
-                except Exception as exc:  # noqa: BLE001
-                    # A measurement must never be able to kill a 13-hour training run.
-                    print(f"MatcherShadow: comparison failed at step {self._seen_steps} ({layer}): {exc!r}", flush=True)
-                    record = {"error": repr(exc)}
-                self._records.append({"layer": layer} | record)
+                # ``MaskFormer.loss`` stacks every decoder layer's costs along the batch axis and
+                # calls the matcher once, layer-major in the order of its outputs. Split the call
+                # back into its layers so each record names the layer it belongs to.
+                batch_size = self._ctx[1][self._target_valid_key].shape[0] if self._ctx is not None else costs.shape[0]
+                num_layers = max(1, costs.shape[0] // batch_size)
+                for i in range(num_layers):
+                    layer = self._layer_names[i] if i < len(self._layer_names) else f"call{i}"
+                    rows = slice(i * batch_size, (i + 1) * batch_size)
+                    try:
+                        record = self._compare(
+                            matcher,
+                            costs[rows],
+                            None if object_valid_mask is None else object_valid_mask[rows],
+                            None if query_valid_mask is None else query_valid_mask[rows],
+                            layer,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        # A measurement must never be able to kill a 13-hour training run.
+                        print(f"MatcherShadow: comparison failed at step {self._seen_steps} ({layer}): {exc!r}", flush=True)
+                        record = {"error": repr(exc)}
+                    self._records.append({"layer": layer} | record)
             return fn(costs, object_valid_mask, query_valid_mask, *args, **kwargs)
 
         return wrapper
@@ -190,14 +200,15 @@ class MatcherShadow(Callback):
 
         Layer 3 needs the predicted masks as they were when the matcher chose, and ``loss``
         permutes them in place (it replaces the entries of the nested outputs dict). The matcher
-        calls happen inside it, one per decoder layer, so a shallow copy of the outputs taken
-        here and read from the matcher wrapper sees the masks before the permutation.
+        call happens inside it, once for all decoder layers stacked, so a shallow copy of the
+        outputs taken here and read from the matcher wrapper sees the masks before the permutation.
         """
 
         def wrapper(outputs, targets, *args, **kwargs):
             if self._active:
                 unpermuted = {layer: {task: dict(out) for task, out in layer_outputs.items()} for layer, layer_outputs in outputs.items()}
                 self._ctx = (unpermuted, targets)
+                self._target_valid_key = f"{model.target_object}_valid"
                 # The layers the matcher will be called for: every layer has a cost unless no
                 # task contributes an intermediate loss, in which case only "final" does.
                 intermediate = any(getattr(task, "has_intermediate_loss", True) for task in model.tasks)
