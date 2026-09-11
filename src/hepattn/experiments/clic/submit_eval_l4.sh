@@ -5,7 +5,7 @@
 # Submit with:
 #   sbatch --job-name=clic-eval-<tag> \
 #          --export=ALL,RUN_DIR=logs/<run_folder>,CKPT_NAME=<ckpt_file> \
-#          submit_eval_run.sh
+#          submit_eval_l4.sh
 
 #SBATCH -p hpg-turin
 #SBATCH --account=avery
@@ -15,7 +15,8 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=50G
-#SBATCH --time=04:00:00
+# --time: 1x L4 evaluation of the small model: under 2 min on head code (jobs 41332603-06). 30 min.
+#SBATCH --time=00:30:00
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=mmazza@fsu.edu
 #SBATCH --output=/blue/avery/m.mazza/projects/fastml/hepattn-paper/src/hepattn/experiments/clic/slurm_logs/slurm-%j.%x.out

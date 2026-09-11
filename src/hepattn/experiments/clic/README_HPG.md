@@ -31,79 +31,104 @@ details see [`README.md`](./README.md).
 
 ## Submitting a training
 
-All commands run from the experiment directory, and `slurm_logs/` must exist (sbatch
-refuses to start if the `--output` directory is missing):
+Everything is submitted **from the experiment directory**, and the scripts `cd` back to
+it on the compute node:
 
 ```shell
 cd /blue/avery/m.mazza/projects/fastml/hepattn-paper/src/hepattn/experiments/clic
-mkdir -p slurm_logs
+mkdir -p slurm_logs        # sbatch refuses to start if the --output directory is missing
 ```
 
-| Script | Partition | Nodes × GPU | Default batch | Global batch |
-|---|---|---|---|---|
-| `submit_training_hpg.sh` | `hpg-b200` | 1 × 4 B200 | 256/GPU | 1024 |
-| `submit_training_hpg_1gpu.sh` | `hpg-b200` | 1 × 1 B200 | 1024 | 1024 |
-| `submit_training_hpg_l4.sh` | `hpg-turin` | 1 × 3 L4 | 170/GPU, 2 accumulation steps | 1020 |
-| `submit_training_hpg_l4_2nodes.sh` | `hpg-turin` | 2 × 3 L4 | 170/GPU | 1020 |
+One script per kind of job. The model config only defines the model; each script sets the
+hardware-dependent settings (device count, batch size per GPU, matcher) on the `main.py`
+command line and layers `configs/hpg.yaml` for the data paths, so any config in `configs/`
+runs on either machine unchanged.
 
-Every script takes the config as its first argument; anything after it passes straight
-through to `main.py fit`, so no script needs editing to change a run:
+| Script | Partition | GPUs | `--mem` | Sets | Use |
+|---|---|---|---|---|---|
+| `submit_training_b200.sh` | `hpg-b200` | 1 B200 | 60G | batch 2048, `configs/matcher_jv.yaml` | fastest way to train |
+| `submit_training_l4.sh` | `hpg-turin` | 3 L4 | 150G | batch 170/GPU x 2 accumulation (the paper's global 1020), `configs/matcher_lap1015.yaml` | the paper's geometry |
+| `submit_eval_l4.sh` | `hpg-turin` | 1 L4 | 50G | inference mode via `configs/eval.yaml` | evaluate a checkpoint, minutes |
+| `submit_validate_run.sh` | `hpg-turin` | 1 L4 | 50G | | re-score a checkpoint on the validation set |
+
+All take the config as their first argument, and anything after it passes straight through
+to `main.py`:
 
 ```shell
-sbatch submit_training_hpg_l4_2nodes.sh configs/base.yaml --name clic_paper
-sbatch submit_training_hpg.sh configs/base_small.yaml --data.batch_size=512
+sbatch submit_training_b200.sh configs/base_small.yaml --name my_run
+sbatch submit_training_l4.sh configs/base_small.yaml --name my_run
+sbatch --export=ALL,RUN_DIR=logs/<run_folder>,CKPT_NAME=<ckpt_file> submit_eval_l4.sh
 ```
 
-The defaults reproduce the paper's global batch of 1024 on each hardware.
+The B200 script needs the GPU matcher's extension built once with
+`setup/build_torch_linear_assignment.sh`; it checks for it before training starts. The L4
+script needs the GIL-releasing `lap1015` build (`python -c "import lap1015; print(lap1015.releases_gil)"`).
 
-Two overlays choose the matching solver, layered after the model config the same way:
-`configs/matcher_lap1015.yaml` (host, threaded lap1015; needs the GIL-releasing build) and
-`configs/matcher_jv.yaml` (GPU Jonker-Volgenant; needs `vendor/torch-linear-assignment`
-built once with `pixi run -e clic bash setup/build_torch_linear_assignment.sh`, which the
-training scripts put on the container's path automatically when the directory exists). The learning
-rate is not batch-scaled, so change the global batch only when you mean to.
+Add `--mail-type=END,FAIL --mail-user=<you>` to the `sbatch` line for e-mail notifications.
 
-### Smoke test first
+### Preflight first, and chain the full run behind it
 
-Before committing a multi-day allocation, run the same launch path for two tiny epochs
-and check the SLURM log for the parameter count in `ModelSummary`, checkpoints under
-`logs/<run>/ckpts/`, and `logs/<run>/csv_metrics/metrics.csv`:
+Before committing a multi-hour allocation, run the same launch path for a few hundred steps
+and chain the full run behind it, so it starts only if the preflight passes:
 
 ```shell
-sbatch --time=00:40:00 --job-name=clic-smoke submit_training_hpg_l4_2nodes.sh configs/base.yaml \
-    --name clic_smoke --trainer.max_epochs=2 --trainer.limit_train_batches=20 --trainer.limit_val_batches=5
+pf=$(sbatch --parsable --time=00:30:00 --job-name=pf submit_training_b200.sh configs/base_small.yaml \
+       --name pf_my_run --trainer.max_steps=300)
+sbatch --dependency=afterok:$pf submit_training_b200.sh configs/base_small.yaml --name my_run
 ```
+
+Check the preflight's SLURM log for the parameter count in `ModelSummary`; a parameter count
+alone instantiates every layer but never runs a forward pass, so only a preflight can see a
+shape error inside an attention kernel.
 
 ### Key rule: devices must match the allocation
 
 `--ntasks-per-node` (SBATCH) must equal `--trainer.devices`, and `--nodes` must equal
 `--trainer.num_nodes`. Each script sets both consistently; if you change the GPU count,
-change both. Global batch = `num_nodes × devices × data.batch_size × accumulate_grad_batches`.
+change both. Global batch = `num_nodes x devices x data.batch_size x accumulate_grad_batches`.
+The learning rate is not batch-scaled, so keep the global batch at the paper's 1020 unless
+you mean to change it.
 
 ### What the launcher does
 
-`srun` starts one task per GPU through [`run_task.sh`](./run_task.sh), which gives each
-rank a private Triton/Inductor compile cache on node-local disk before starting the
-container. Without it, the ranks race on the shared `$HOME/.triton` cache when the
-`Compile` callback compiles the model, one dies with `Text file busy`, and the job hangs
-on NCCL.
+Multi-GPU scripts start one task per GPU through [`run_task.sh`](./run_task.sh), which gives
+each rank a private Triton/Inductor compile cache on node-local disk before starting the
+container. Without it, the ranks race on the shared `$HOME/.triton` cache when the `Compile`
+callback compiles the model, one dies with `Text file busy`, and the job hangs on NCCL.
 
 `COMET_MODE=offline` is exported because the compute nodes have no internet and no
 `COMET_API_KEY`. The Comet archive lands in the run folder; the CLI also attaches a
 `CSVLogger`, so train and val losses are always in `logs/<run>/csv_metrics/metrics.csv`
-regardless of Comet. `hepattn.utils.loggers.MyCometLogger` is available for configs that
-want the offline switch to happen automatically when no API key is set.
+regardless of Comet.
 
-### Optional: solve the matching on the GPU
+## Measured runtimes: what to request
 
-A single B200 is not saturated by the CLIC model, so the training step there is
-host-bound and the Hungarian matching (device-to-host copy plus a threaded solve)
-dominates it. The `Matcher` has an opt-in GPU solver for exactly that case: build it
-once with `pixi run -e clic bash setup/build_torch_linear_assignment.sh`, export the
-`PYTHONPATH` and `LD_LIBRARY_PATH` it prints in the submit script, and set
-`device_solver: jv` on the matcher in the config. See the
-[top-level README](../../../../README.md#optional-solving-the-matching-on-the-gpu).
-Leave it off on the L4 nodes, which the model already keeps busy.
+Every `#SBATCH --time` in the submit scripts is set from a measured run, at 1.3x the
+measured wall time rounded up to the hour, and carries a comment naming that run. Do not
+copy a `--time` line from another script. The measurements on this code, all 200 epochs:
+
+| model | hardware | matcher | wall time | request | job |
+|---|---|---|---|---|---|
+| paper model, 12.1M (`base.yaml`) | 6x L4 (2 nodes), batch 170/GPU | scipy | 19 h 05 | 25 h | 37233919 (paper clone) |
+| small, 0.82M (`base_small.yaml`) | 3x L4, batch 170/GPU x 2 accumulation | scipy | 20 h 02 | 27 h | 39236741 (paper clone) |
+| small | 1x B200, batch 2048 | `device_solver: jv` | **projected 24 h** from the first epochs (7 min/epoch) | 31 h | 41750147, running 2026-09-11 |
+| small | 3x L4, batch 170/GPU x 2 accumulation | `lap1015_late` | pending | | 41750149 |
+
+For orientation only, the head-based v7 model (0.70M) at the B200 geometry took 6 h 28 to
+7 h 40 with the GPU matcher and 23 h 15 with the host matcher (`main`, README_HPG.md there).
+The paper's code is not expected to match those numbers.
+
+**No measurement for your case?** Run a preflight and project. Submit the training script
+with a short step cap and a short limit, then read the projection off its log:
+
+```shell
+sbatch --time=00:30:00 submit_training_b200.sh <cfg> --trainer.max_steps=300
+python project_runtime.py slurm_logs/slurm-<jobid>.<name>.out --epochs 200
+```
+
+It fits the step rate after torch.compile warm-up and prints the projected wall time and the
+`--time` to request. It errs on the long side (epoch 0 runs slower than steady state), and it
+only reports: the person submitting sets the limit on the full run.
 
 ## Outputs & monitoring
 
@@ -127,15 +152,13 @@ config, which applies the evaluation rules from [`README.md`](./README.md): fp32
 
 | Script | Purpose |
 |---|---|
-| `submit_eval_run.sh` | Parameterised eval: `RUN_DIR` and `CKPT_NAME` from the environment. Writes `<ckpt>__test.root` next to the checkpoint. |
-| `submit_eval_hpg_l4.sh` | Same, with the run and checkpoint edited into the script. |
-| `submit_eval_test_hpg_l4.sh` | One-batch smoke test of the eval path. |
+| `submit_eval_l4.sh` | Parameterised eval: `RUN_DIR` and `CKPT_NAME` from the environment. Writes `<ckpt>__test.root` next to the checkpoint. |
 | `submit_validate_run.sh` | Validation-only pass: re-score a checkpoint on the val set under the current code, into a fresh `logs/_val_<jobid>/`. Optional `CONFIG` scores it under another run's objective. |
 
 ```shell
 sbatch --job-name=clic-eval-paper \
        --export=ALL,RUN_DIR=logs/<run_folder>,CKPT_NAME=<epoch=...ckpt> \
-       submit_eval_run.sh
+       submit_eval_l4.sh
 ```
 
 Produce the performance plots with

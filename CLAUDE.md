@@ -108,3 +108,15 @@ in the worktree next door. Read them there:
 
 Both worktrees share one repository, so `git log main` and `git show main:<path>`
 work from here.
+
+## Submitting SLURM jobs: request what was measured
+
+Before any `sbatch`, look up the run's measured wall time in the "Measured runtimes"
+table of `src/hepattn/experiments/clic/README_HPG.md` and request 1.3x it, rounded up to
+the hour. Never inherit `--time` from another script or from a copied header: every B200
+training on `main` from 28 August to 7 September 2026 asked for 4 days and finished in 7
+hours. If there is no measurement, run a preflight (`--trainer.max_steps=300`) and read
+`project_runtime.py`'s suggestion. State the measured time and the requested time in the
+message that reports the submission. The limit is the person's decision: report a
+projection, never change a queued job's limit yourself. Chain a full run behind its
+preflight with `--dependency=afterok:<preflight job>`.
