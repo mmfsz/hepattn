@@ -94,7 +94,7 @@ fi
 # --- 2b. work around the truncated torch header (trap 6) --------------------------------------
 # Rebuild compat_include/ from a known-good copy every time, so a fresh `cp -a` of the pristine
 # tree (which has neither the directory nor the setup.py hook) still builds.
-GOOD_HEADER=$REPO/.pixi/envs/default/lib/python3.12/site-packages/torch/include/ATen/ops/ctc_loss_ops.h
+GOOD_HEADER=$REPO/.pixi/envs/clic/lib/python3.12/site-packages/torch/include/ATen/ops/ctc_loss_ops.h
 BAD_HEADER=$PIXI_ENV/lib/python3.12/site-packages/torch/include/ATen/ops/ctc_loss_ops.h
 if [ ! -s "$BAD_HEADER" ]; then
   echo "NOTE: $BAD_HEADER is empty -- applying the compat_include shim (trap 6)."

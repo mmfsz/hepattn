@@ -66,7 +66,7 @@ cd /blue/avery/m.mazza/projects/fastml/hepattn/src/hepattn/experiments/clic/
 export TMPDIR=/var/tmp/
 
 SIF=/blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif
-PIXI_ENV=/blue/avery/m.mazza/projects/fastml/hepattn/.pixi/envs/default
+PIXI_ENV=/blue/avery/m.mazza/projects/fastml/hepattn/.pixi/envs/clic
 
 # The -default tree, NOT the bench tree. The extension is ABI-bound to the pixi env it was
 # built against: main.py runs under `default` (torch 2.9.1) while the offline benches run under
@@ -90,16 +90,17 @@ export APPTAINERENV_TRITON_CACHE_DIR="${CACHE}/triton"
 
 echo "started: $(date -Is)"
 
-# `-e default` is NOT decorative. #SBATCH --export=ALL exports the submitting shell, and a
-# shell that is inside `pixi shell -e clic` carries PIXI_ENVIRONMENT_NAME=clic, PIXI_IN_SHELL=1
-# and a clic-first PATH. Apptainer passes those through, so a bare `pixi run` resolves to the
+# The explicit `-e` is NOT decorative. #SBATCH --export=ALL exports the submitting shell, and a
+# shell that is inside `pixi shell` carries PIXI_ENVIRONMENT_NAME, PIXI_IN_SHELL=1 and an
+# env-first PATH. Apptainer passes those through, so a bare `pixi run` resolves to whatever that
+# shell had active. This used to say `-e default` because, at the time, a bare run resolved to the
 # *clic* env (torch 2.10), whose flash-attn is not the one this model needs: the encoder dies in
 # sanity check with `TypeError: 'NoneType' object is not callable` at attention.py:292, ~2 min
 # in and with nothing about pixi in the traceback. Job 40639789 died this way, as did the four
 # model-size arms 40540644-47 before it. Pinning the environment makes the script immune to
 # whatever shell submits it.
 srun apptainer run --nv --bind /blue/,/cmsuf/ "$SIF" \
-  pixi run -e default python main.py fit \
+  pixi run -e clic python main.py fit \
     --config configs/clic_v6_cudamatch.yaml \
     --config configs/shadow_matcher.yaml \
     --trainer.devices=1

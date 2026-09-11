@@ -45,7 +45,7 @@ nvidia-smi -L
 
 cd $REPO/src/hepattn/experiments/clic/
 export TMPDIR=/var/tmp/
-RUN="srun apptainer run --nv --bind /blue/,/cmsuf/ $REPO/pixi.sif pixi run"
+RUN="srun apptainer run --nv --bind /blue/,/cmsuf/ $REPO/pixi.sif pixi run -e clic"
 
 $RUN python -c "import lap1015; print('lap1015.releases_gil:', lap1015.releases_gil)"
 

@@ -49,7 +49,7 @@ echo "Using config: $CONFIG_PATH  (batch_size 2048 from the config, as in June)"
 PYTORCH_CMD="python main.py fit --config $CONFIG_PATH --trainer.devices=1"
 
 srun apptainer run --nv --bind /blue/,/cmsuf/ \
-  /blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif pixi run $PYTORCH_CMD
+  /blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif pixi run -e clic $PYTORCH_CMD
 
 echo "finished: $(date -Is)"
 echo "Done!"

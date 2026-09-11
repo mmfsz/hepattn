@@ -54,7 +54,7 @@ echo "Running 3x L4 throughput rerun (batch 256/GPU, 800 steps, SimpleProfiler).
 PYTORCH_CMD="python main.py fit --config configs/base.yaml --config configs/profile.yaml --config configs/profile_l4.yaml --trainer.devices=3"
 
 # Pixi command that runs the python command inside the pixi env
-PIXI_CMD="pixi run $PYTORCH_CMD"
+PIXI_CMD="pixi run -e clic $PYTORCH_CMD"
 
 # Apptainer command that runs the pixi command inside the pixi apptainer image
 # srun in front for multi-GPU DDP

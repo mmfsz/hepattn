@@ -58,7 +58,7 @@ echo "started: $(date -Is)"
 
 srun apptainer run --nv --bind /blue/,/cmsuf/ \
   /blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif \
-  pixi run python main.py fit \
+  pixi run -e clic python main.py fit \
     --config configs/clic_v6_maskfix.yaml \
     --config configs/profile_noprof.yaml \
     --config configs/profile_l4.yaml \

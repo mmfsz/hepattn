@@ -21,5 +21,5 @@ echo
 cd /blue/avery/m.mazza/projects/fastml/hepattn/src/hepattn/experiments/clic/studies/b200_utilization/profiling
 
 BENCH_CMD="python bench_matcher_threads.py"
-srun apptainer run --bind /blue/,/cmsuf/ /blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif pixi run $BENCH_CMD
+srun apptainer run --bind /blue/,/cmsuf/ /blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif pixi run -e clic $BENCH_CMD
 echo "Done!"

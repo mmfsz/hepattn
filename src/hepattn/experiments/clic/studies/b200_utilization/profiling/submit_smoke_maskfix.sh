@@ -53,7 +53,7 @@ echo "Running B200 throughput rerun (SMOKE TEST: maskfix losses, 25 steps)..."
 PYTORCH_CMD="python main.py fit --config configs/clic_v6_maskfix.yaml --trainer.devices=1 --data.batch_size=256 --trainer.max_steps=25 --trainer.limit_val_batches=2 --trainer.val_check_interval=20"
 
 # Pixi command that runs the python command inside the pixi env
-PIXI_CMD="pixi run $PYTORCH_CMD"
+PIXI_CMD="pixi run -e clic $PYTORCH_CMD"
 
 # Apptainer command that runs the pixi command inside the pixi apptainer image
 APPTAINER_CMD="srun apptainer run --nv --bind /blue/,/cmsuf/ /blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif $PIXI_CMD"

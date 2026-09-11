@@ -12,7 +12,7 @@
 #
 # WHICH VENDOR TREE, AND WHICH ENV. The candidate tree is built against the `default` env
 # (torch 2.9.1), because that is what main.py trains under and this fix is destined for the
-# production path. So this runs `pixi run -e default`, NOT the `-e clic` the other offline
+# production path. So this runs `pixi run -e clic`, NOT the `-e clic` the other offline
 # benches use: a torch extension is ABI-bound to the torch it was compiled against and the
 # wrong one dies on `undefined symbol: _ZNK3c1010TensorImpl15incref_pyobjectEv`.
 # LD_LIBRARY_PATH must point at that env's lib or the import dies on CXXABI_1.3.15 instead.
@@ -41,7 +41,7 @@ set -euo pipefail
 REPO=/blue/avery/m.mazza/projects/fastml/hepattn
 STUDY=$REPO/src/hepattn/experiments/clic/studies/b200_utilization/cuda_matcher
 VENDOR=/blue/avery/m.mazza/projects/fastml/vendor/torch-linear-assignment-smpcores10
-PIXI_ENV=$REPO/.pixi/envs/default
+PIXI_ENV=$REPO/.pixi/envs/clic
 
 if [ ! -d "$VENDOR" ]; then
   echo "FAILED: candidate extension not found at $VENDOR; run build_tla_smpcores10.sh first" >&2
@@ -65,7 +65,7 @@ export APPTAINERENV_PYTHONPATH=$VENDOR
 export APPTAINERENV_LD_LIBRARY_PATH=$PIXI_ENV/lib
 
 cd "$STUDY"
-srun apptainer run --nv --bind /blue/,/cmsuf/ "$REPO/pixi.sif" pixi run -e default \
+srun apptainer run --nv --bind /blue/,/cmsuf/ "$REPO/pixi.sif" pixi run -e clic \
   python verify_smpcores10.py --costs "$COSTS"
 
 echo "Done!"

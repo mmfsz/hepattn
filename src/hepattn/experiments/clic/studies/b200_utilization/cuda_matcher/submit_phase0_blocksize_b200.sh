@@ -44,7 +44,7 @@ set -euo pipefail
 
 REPO=/blue/avery/m.mazza/projects/fastml/hepattn
 CLIC=$REPO/src/hepattn/experiments/clic
-PIXI_ENV=$REPO/.pixi/envs/default
+PIXI_ENV=$REPO/.pixi/envs/clic
 # Defaults to the PRODUCTION tree. Until 2026-08-28 that tree had no TLA_BLOCK_SIZE patch and
 # this had to point at -candidate; the candidate was merged into production that day, so the
 # default now exercises the path training actually takes. Override VENDOR to re-test a candidate.
@@ -83,7 +83,7 @@ run_cell () {
   echo "TLA_BLOCK_SIZE=${bs:-<unset, SMPCores fallback = 128>}"
   echo "started: $(date -Is)"
 
-  apptainer run --nv --bind /blue/,/cmsuf/ "$REPO/pixi.sif" pixi run -e default \
+  apptainer run --nv --bind /blue/,/cmsuf/ "$REPO/pixi.sif" pixi run -e clic \
     python main.py fit \
       --config configs/clic_v6_cudamatch.yaml \
       --config configs/profile_phase0.yaml \

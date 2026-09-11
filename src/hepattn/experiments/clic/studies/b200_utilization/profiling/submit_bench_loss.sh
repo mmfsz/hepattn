@@ -32,7 +32,7 @@ export TMPDIR=/var/tmp/
 export TORCH_LOGS="recompiles,graph_breaks"
 
 BENCH_CMD="python bench_loss_kernels.py --json-out profile_logs/bench_loss_${SLURM_JOB_ID}.json"
-CMD="srun apptainer run --nv --bind /blue/,/cmsuf/ /blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif pixi run $BENCH_CMD"
+CMD="srun apptainer run --nv --bind /blue/,/cmsuf/ /blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif pixi run -e clic $BENCH_CMD"
 echo "Running command: $CMD"
 $CMD
 echo "Done!"

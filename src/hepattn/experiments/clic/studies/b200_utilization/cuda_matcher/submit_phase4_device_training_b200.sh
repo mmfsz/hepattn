@@ -55,7 +55,7 @@ cd /blue/avery/m.mazza/projects/fastml/hepattn/src/hepattn/experiments/clic/
 export TMPDIR=/var/tmp/
 
 SIF=/blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif
-PIXI_ENV=/blue/avery/m.mazza/projects/fastml/hepattn/.pixi/envs/default
+PIXI_ENV=/blue/avery/m.mazza/projects/fastml/hepattn/.pixi/envs/clic
 
 # The -default tree, NOT the bench tree. The extension is ABI-bound to the pixi env it was
 # built against: main.py runs under `default` (torch 2.9.1) while the offline benches run under
@@ -80,7 +80,7 @@ export APPTAINERENV_TRITON_CACHE_DIR="${CACHE}/triton"
 echo "started: $(date -Is)"
 
 srun apptainer run --nv --bind /blue/,/cmsuf/ "$SIF" \
-  pixi run python main.py fit \
+  pixi run -e clic python main.py fit \
     --config configs/clic_v6_cudamatch.yaml \
     --trainer.devices=1
 

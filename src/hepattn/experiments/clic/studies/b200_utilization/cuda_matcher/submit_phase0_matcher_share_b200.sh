@@ -57,7 +57,7 @@ export TMPDIR=/var/tmp/
 # without the GIL release turns --cpus-per-task=16 into one working thread and inflates the
 # matcher's share, which is what happened to the first run of this job (job 39401280, see
 # NOTES.md). Print the flag so the log says which kind of number it produced.
-srun apptainer run --nv --bind /blue/,/cmsuf/ $REPO/pixi.sif pixi run \
+srun apptainer run --nv --bind /blue/,/cmsuf/ $REPO/pixi.sif pixi run -e clic \
   python -c "import lap1015; print('lap1015.releases_gil:', lap1015.releases_gil)"
 
 # N_JOBS overrides the matcher's host thread pool. The config asks for 16, which job 40137096
@@ -89,7 +89,7 @@ PYTORCH_CMD="python main.py fit \
   --trainer.devices=1 $JOBS_ARG $SOLVER_ARG"
 
 srun apptainer run --nv --bind /blue/,/cmsuf/ \
-  $REPO/pixi.sif pixi run $PYTORCH_CMD
+  $REPO/pixi.sif pixi run -e clic $PYTORCH_CMD
 
 # Stamp the results with the job id so repeat runs and the two arms cannot clobber each other.
 for ext in npz json; do

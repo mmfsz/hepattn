@@ -47,7 +47,7 @@ echo "arm config: $CONFIG"
 nvidia-smi
 
 export TMPDIR=/var/tmp/
-RUN="srun apptainer run --nv --bind /blue/,/cmsuf/ $REPO/pixi.sif pixi run"
+RUN="srun apptainer run --nv --bind /blue/,/cmsuf/ $REPO/pixi.sif pixi run -e clic"
 
 echo "=== STAGE 1: dump one step's real cost matrices ==="
 cd $REPO/src/hepattn/experiments/clic/

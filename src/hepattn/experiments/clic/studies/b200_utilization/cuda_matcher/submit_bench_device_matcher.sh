@@ -32,7 +32,7 @@ cd /blue/avery/m.mazza/projects/fastml/hepattn/src/hepattn/experiments/clic/stud
 export TMPDIR=/var/tmp/
 
 BENCH_CMD="python bench_device_matcher.py --n-jobs 16 --sample 512"
-CMD="srun apptainer run --nv --bind /blue/,/cmsuf/ /blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif pixi run $BENCH_CMD"
+CMD="srun apptainer run --nv --bind /blue/,/cmsuf/ /blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif pixi run -e clic $BENCH_CMD"
 echo "Running command: $CMD"
 $CMD
 echo "Done!"

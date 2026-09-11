@@ -73,7 +73,7 @@ run_arm () {
   echo "started: $(date -Is)"
 
   srun apptainer run --nv --bind /blue/,/cmsuf/ "$SIF" \
-    pixi run python main.py fit \
+    pixi run -e clic python main.py fit \
       --config "${cfg}" \
       --config configs/profile_noprof.yaml \
       --trainer.devices=1

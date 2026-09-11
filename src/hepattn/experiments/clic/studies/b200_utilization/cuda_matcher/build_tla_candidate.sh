@@ -24,7 +24,7 @@
 #                         is not bind-mounted into the container, and nvcc is then not found
 set -euo pipefail
 REPO=/blue/avery/m.mazza/projects/fastml/hepattn
-PIXI_ENV=$REPO/.pixi/envs/default
+PIXI_ENV=$REPO/.pixi/envs/clic
 V=/blue/avery/m.mazza/projects/fastml/vendor
 SRC=$V/torch-linear-assignment-default
 PATCHED=$V/torch-linear-assignment-blocksize
@@ -42,7 +42,7 @@ export APPTAINERENV_CUDA_HOME=$PIXI_ENV
 export APPTAINERENV_MAX_JOBS=4
 
 cd "$REPO"
-apptainer run --bind /blue/,/cmsuf/ "$REPO/pixi.sif" pixi run -e default \
+apptainer run --bind /blue/,/cmsuf/ "$REPO/pixi.sif" pixi run -e clic \
   bash -c "cd $VENDOR && python setup.py build_ext --inplace"
 
 SO=$(find "$VENDOR/torch_linear_assignment" -name '_backend*.so' | head -1)
@@ -57,7 +57,7 @@ NPATCH=$(strings -a "$SO" | grep -c TLA_BLOCK_SIZE || true)
 
 export APPTAINERENV_PYTHONPATH=$VENDOR
 export APPTAINERENV_LD_LIBRARY_PATH=$PIXI_ENV/lib
-apptainer run --bind /blue/,/cmsuf/ "$REPO/pixi.sif" pixi run -e default python -c "
+apptainer run --bind /blue/,/cmsuf/ "$REPO/pixi.sif" pixi run -e clic python -c "
 import torch_linear_assignment._backend as b
 from torch_linear_assignment import batch_linear_assignment
 assert b.has_cuda(), 'CPU-only build -- FORCE_CUDA did not take'

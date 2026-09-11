@@ -47,7 +47,7 @@ cd /blue/avery/m.mazza/projects/fastml/hepattn/src/hepattn/experiments/clic/
 export TMPDIR=/var/tmp/
 
 SIF=/blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif
-PIXI_ENV=/blue/avery/m.mazza/projects/fastml/hepattn/.pixi/envs/default
+PIXI_ENV=/blue/avery/m.mazza/projects/fastml/hepattn/.pixi/envs/clic
 
 # The -default tree, ABI-bound to the pixi env main.py runs under. See submit_shadow_matcher_b200.sh.
 VENDOR=/blue/avery/m.mazza/projects/fastml/vendor/torch-linear-assignment-default
@@ -67,10 +67,11 @@ CKPT="logs/clic_v6_cudamatch_shadow_20260830-T121009/ckpts/epoch=198-val_loss=3.
 
 echo "started: $(date -Is)"
 
-# `-e default` is load-bearing: a bare `pixi run` inherits PIXI_ENVIRONMENT_NAME from the
-# submitting shell and dies in the encoder if that shell was in `pixi shell -e clic`.
+# The explicit `-e` is load-bearing: a bare `pixi run` inherits PIXI_ENVIRONMENT_NAME from the
+# submitting shell. This used to say `-e default` because the clic env lacked flash-attn; clic
+# now carries the same torch and flash-attn, and is the only env installed.
 srun apptainer run --nv --bind /blue/,/cmsuf/ "$SIF" \
-  pixi run -e default python main.py fit \
+  pixi run -e clic python main.py fit \
     --config configs/clic_v6_cudamatch.yaml \
     --config configs/shadow_raw_dump.yaml \
     --trainer.devices=1 \

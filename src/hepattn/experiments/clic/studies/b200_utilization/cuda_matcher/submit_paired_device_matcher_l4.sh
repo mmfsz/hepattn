@@ -106,7 +106,7 @@ export TMPDIR=/var/tmp/
 
 SIF=/blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif
 VENDOR=/blue/avery/m.mazza/projects/fastml/vendor/torch-linear-assignment-default
-PIXI_ENV=/blue/avery/m.mazza/projects/fastml/hepattn/.pixi/envs/default
+PIXI_ENV=/blue/avery/m.mazza/projects/fastml/hepattn/.pixi/envs/clic
 
 # Carried into the container. Harmless for the host arm, which never imports the extension;
 # without the second one the import dies on CXXABI_1.3.15.
@@ -132,7 +132,7 @@ run_arm () {
   echo "started: $(date -Is)"
 
   srun apptainer run --nv --bind /blue/,/cmsuf/ "$SIF" \
-    pixi run python main.py fit \
+    pixi run -e clic python main.py fit \
       --config "${cfg}" \
       --config configs/profile_noprof.yaml \
       --config configs/profile_l4.yaml \

@@ -51,6 +51,6 @@ PYTORCH_CMD="python main.py fit \
   --trainer.profiler.init_args.filename=phase3_maskfix_b200"
 
 srun apptainer run --nv --bind /blue/,/cmsuf/ \
-  /blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif pixi run $PYTORCH_CMD
+  /blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif pixi run -e clic $PYTORCH_CMD
 
 echo "Done!"

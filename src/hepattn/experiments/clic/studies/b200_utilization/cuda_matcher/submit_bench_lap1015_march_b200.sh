@@ -48,7 +48,7 @@ echo "avx512f present: $(grep -m1 -c avx512f /proc/cpuinfo || true)"
 cd $STUDY
 export TMPDIR=/var/tmp/
 
-srun apptainer run --nv --bind /blue/,/cmsuf/ $REPO/pixi.sif pixi run \
+srun apptainer run --nv --bind /blue/,/cmsuf/ $REPO/pixi.sif pixi run -e clic \
   python bench_lap1015_march.py --reps 3
 
 echo "Done!"
