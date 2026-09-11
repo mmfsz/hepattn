@@ -54,7 +54,13 @@ sbatch submit_training_hpg_l4_2nodes.sh configs/base.yaml --name clic_paper
 sbatch submit_training_hpg.sh configs/base_small.yaml --data.batch_size=512
 ```
 
-The defaults reproduce the paper's global batch of 1024 on each hardware. The learning
+The defaults reproduce the paper's global batch of 1024 on each hardware.
+
+Two overlays choose the matching solver, layered after the model config the same way:
+`configs/matcher_lap1015.yaml` (host, threaded lap1015; needs the GIL-releasing build) and
+`configs/matcher_jv.yaml` (GPU Jonker-Volgenant; needs `vendor/torch-linear-assignment`
+built once with `pixi run -e clic bash setup/build_torch_linear_assignment.sh`, which the
+training scripts put on the container's path automatically when the directory exists). The learning
 rate is not batch-scaled, so change the global batch only when you mean to.
 
 ### Smoke test first

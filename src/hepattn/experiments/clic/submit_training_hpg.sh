@@ -44,6 +44,14 @@ echo "Moved dir, now in: ${PWD}"
 # Set tmpdir
 export TMPDIR=/var/tmp/
 
+# Make the GPU matcher (configs/matcher_jv.yaml) available when its out-of-environment build
+# exists: apptainer forwards APPTAINERENV_* into the container. Harmless when unused.
+TLA_DIR=/blue/avery/m.mazza/projects/fastml/hepattn-paper/vendor/torch-linear-assignment
+if [ -d "$TLA_DIR" ]; then
+  export APPTAINERENV_PYTHONPATH="$TLA_DIR"
+  export APPTAINERENV_LD_LIBRARY_PATH=/blue/avery/m.mazza/projects/fastml/hepattn-paper/.pixi/envs/clic/lib
+fi
+
 # configs/hpg.yaml layers the HPG data paths over the model config, which keeps the
 # authors' paths. batch_size 256/GPU x 4 B200 = global 1024, the paper's global batch (the throughput studies on main used 2048/GPU).
 # Override any of these through the extra arguments.
