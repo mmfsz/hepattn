@@ -60,8 +60,11 @@ pixi install --locked
 ```
 
 **📝 Note**: The `default` environment targets GPU machines and installs FA2.
-See the [pyproject.toml](pyproject.toml) or [setup/isambard.md](setup/isambard.md)
-for more information.
+The `clic` environment is `default` plus the CLIC analysis packages (`fastjet`,
+`energyflow`, `vector`, `pathos`), with the same pinned torch and flash-attention
+build, so it can both train and run the jet and substructure analysis; use it for
+anything CLIC. See the [pyproject.toml](pyproject.toml) or
+[setup/isambard.md](setup/isambard.md) for more information.
 
 ### The `lap1015` Extension
 

@@ -85,6 +85,10 @@ pixi shell -e clic
 python main.py fit --config configs/clic_v7.yaml --trainer.devices=1
 ```
 
+The submit scripts run in the `default` environment (`pixi run`); the `clic`
+environment is a superset of it that adds the analysis packages, so training works in
+either, and the performance notebooks need `clic`.
+
 ## Outputs & monitoring
 
 - **Training output folder:** `logs/<config-name>_<YYYYMMDD>-T<HHMMSS>/` (checkpoints in

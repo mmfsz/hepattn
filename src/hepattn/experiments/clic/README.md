@@ -16,6 +16,10 @@ pixi shell -e clic
 cd hepattn/src/hepattn/experiments/clic/
 ```
 
+The `clic` environment is the GPU `default` environment plus the analysis packages
+(`fastjet`, `energyflow`, `vector`, `pathos`), so one environment covers training,
+evaluation and the performance notebooks.
+
 If you don't already have the CLIC data, download it from one of the locations listed in the [CLIC Data](#clic-data) section below.
 
 **📝 Note**: The training config uses the `lap1015_late` Hungarian solver, which relies
