@@ -75,11 +75,21 @@ brought over from `main`'s study once the first results exist.
 
 | Arm | Job | Run folder | Pre-flight | Status |
 |---|---|---|---|---|
-| reference (B200, jv) | 41750147 | `clic_paper_small_b200_jv_*` | 41750146 | queued 2026-09-11 (submitted from `studies/paper_tag_baseline/`) |
-| C5 a2a4 | 41750166 | | 41750165 | queued 2026-09-11 |
-| C4 a3a4 | 41750168 | | 41750167 | queued 2026-09-11 |
-| C3 a2a3 | 41750170 | | 41750169 | queued 2026-09-11 |
-| C1 a2a3a4 | 41750172 | | 41750171 | queued 2026-09-11 |
+| reference (B200, jv) | 41750147 | `clic_paper_small_b200_jv_20260911-T130357` | 41750146 passed | CANCELLED 2026-09-11 at epoch ~3 |
+| C5 a2a4 | 41750166 | `clic_paper_small_C5_a2a4_20260911-T130709` | 41750165 passed | CANCELLED |
+| C4 a3a4 | 41750168 | `clic_paper_small_C4_a3a4_20260911-T132105` | 41750167 passed | CANCELLED |
+| C3 a2a3 | 41750170 | `clic_paper_small_C3_a2a3_20260911-T13*` | 41750169 passed | CANCELLED |
+| C1 a2a3a4 | 41750172 | `clic_paper_small_C1_a2a3a4_20260911-T130715` | 41750171 passed | CANCELLED |
+
+**Round 1 cancelled 2026-09-11.** The runs stepped at 790 ms (7 min/epoch, 24 h projected) against
+head-v7's 360 ms at the same geometry, with the matcher at 0.5% of the step (`MatcherTimer`, job
+41755411) and the GPU saturated. The paper code on 3x L4 (job 39236741) was *faster* per GPU than
+head-v7, so the loss is specific to the B200 + torch 2.9 stack; the leading suspect is the tag's
+Compile callback compiling the whole model as one graph and losing autocast (the attention bf16
+cast exists for exactly that failure). Diagnostics 41755907 (stacked matching + head's compile),
+41756034 (no compile), 41756035 (PyTorch profiler), 41755775 (host solver), 41755985 (simple
+profiler). Resubmit the arms once the step time is understood. The pre-flights stand: all four
+arm configs instantiate and train.
 
 The arm preflights were submitted without a distinguishing `--name`, so each arm has TWO run
 folders: the earlier one (12:15-12:24) is the preflight (`fast_dev_run`, no checkpoints), the
