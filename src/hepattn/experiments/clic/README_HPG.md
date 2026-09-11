@@ -88,6 +88,17 @@ on NCCL.
 regardless of Comet. `hepattn.utils.loggers.MyCometLogger` is available for configs that
 want the offline switch to happen automatically when no API key is set.
 
+### Optional: solve the matching on the GPU
+
+A single B200 is not saturated by the CLIC model, so the training step there is
+host-bound and the Hungarian matching (device-to-host copy plus a threaded solve)
+dominates it. The `Matcher` has an opt-in GPU solver for exactly that case: build it
+once with `pixi run -e clic bash setup/build_torch_linear_assignment.sh`, export the
+`PYTHONPATH` and `LD_LIBRARY_PATH` it prints in the submit script, and set
+`device_solver: jv` on the matcher in the config. See the
+[top-level README](../../../../README.md#optional-solving-the-matching-on-the-gpu).
+Leave it off on the L4 nodes, which the model already keeps busy.
+
 ## Outputs & monitoring
 
 - **Run folder:** `logs/<name>_<YYYYMMDD>-T<HHMMSS>/` with `ckpts/`, the resolved
