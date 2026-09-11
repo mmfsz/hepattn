@@ -88,8 +88,24 @@ head-v7, so the loss is specific to the B200 + torch 2.9 stack; the leading susp
 Compile callback compiling the whole model as one graph and losing autocast (the attention bf16
 cast exists for exactly that failure). Diagnostics 41755907 (stacked matching + head's compile),
 41756034 (no compile), 41756035 (PyTorch profiler), 41755775 (host solver), 41755985 (simple
-profiler). Resubmit the arms once the step time is understood. The pre-flights stand: all four
-arm configs instantiate and train.
+profiler). **Cause found and fixed the same day.** The paper's `Compile` callback compiled the whole model as
+one dynamic graph; head's compiles only the encoder and decoder, after the sanity check. With
+head's callback (merged as dd72cd1) the same run steps at **367 ms** (job 41755907, 5,582
+samples/s), head-v7's pace; without any compilation it ran at 1.74 it/s over the first 300 steps
+(job 41756034), so the whole-model graph was actively slower than eager. The matcher stays at
+0.4% of the step.
+
+**Round 1, resubmitted 2026-09-11 on ae43410** (14 h requested from the 10.4 h projection, each
+full run chained `afterok` behind a named pre-flight):
+
+| Arm | Pre-flight | Full run |
+|---|---|---|
+| reference (B200, jv) | 41758026 | 41758027 |
+| C5 a2a4 | 41758028 | 41758029 |
+| C4 a3a4 | 41758030 | 41758031 |
+| C3 a2a3 | 41758032 | 41758033 |
+| C1 a2a3a4 | 41758034 | 41758035 |
+
 
 The arm preflights were submitted without a distinguishing `--name`, so each arm has TWO run
 folders: the earlier one (12:15-12:24) is the preflight (`fast_dev_run`, no checkpoints), the
