@@ -1,17 +1,25 @@
 # Paper-tag baseline: reproduce previous results and timings after the ports
 
 Two trainings of the paper's model at v7 width (`configs/base_small.yaml`, 819,683 parameters) on
-the `clic-paper-main` line, submitted 2026-09-11 at commit 47645e1, right after the environment
+the `clic-paper-main` line, first submitted 2026-09-11 at commit 47645e1, right after the environment
 (torch 2.9.1 + cu128), the GIL-releasing lap1015, the JV device solver, the mask-loss fix and the
 HPG tooling were ported from `main` onto the tag. They answer one question: **does this code +
 environment reproduce what the paper-tag code did before, and how fast is it on each hardware?**
+
+Run 1 was cancelled and resubmitted the same day at commit a2b05f5, after the whole-model `Compile`
+callback was found to be the cause of the 790 ms step and replaced by head's encoder/decoder compile
+(see `studies/model_size/README.md`; run 1 is that study's reference arm and was resubmitted with it).
+Run 2 is unaffected by that fix and still carries its original job numbers.
 
 ## Runs
 
 | # | Hardware | Matcher | Geometry | Job | Pre-flight | Run folder |
 |---|---|---|---|---|---|---|
-| 1 | 1× B200 | GPU JV (`configs/matcher_jv.yaml`) | batch 2048, 200 ep | **41750147** | 41750146 | `logs/clic_paper_small_b200_jv_<ts>` |
+| 1 | 1× B200 | GPU JV (`configs/matcher_jv.yaml`) | batch 2048, 200 ep | **41758027** | 41758026 | `logs/clic_paper_small_b200_jv_20260911-T141520` |
 | 2 | 1 node × 3 L4 | host lap1015_late (`configs/matcher_lap1015.yaml`) | batch 170 × 2 accum (global 1020), 200 ep | **41750149** | 41750148 | `logs/clic_paper_small_l4_lap1015_<ts>` |
+
+Superseded round for run 1: pre-flight 41750146 passed, training 41750147 cancelled 2026-09-11 at
+epoch ~3 (`logs/clic_paper_small_b200_jv_20260911-T130357`).
 
 Pre-flights run the same launch path with `--trainer.fast_dev_run=true` (one train + one val
 batch, `--time=00:30:00`, run name prefixed `pf_`). The full runs were queued at the same time; if a
@@ -77,5 +85,15 @@ different code) at the same geometry and matcher: job **40405423**, 7 h 40 m on 
 
 | # | Pre-flight | Training | Eval | val_loss (best ep) | wall time | proxy IQR low→high | verdict |
 |---|---|---|---|---|---|---|---|
-| 1 B200 JV | 41750146 ⏳ | 41750147 ⏳ | | | | | |
-| 2 3×L4 lap1015 | 41750148 ⏳ | 41750149 ⏳ | | | | | |
+| 1 B200 JV | 41758026 ✅ | 41758027 ⏳ RUNNING | | | | | |
+| 2 3×L4 lap1015 | 41750148 ⏳ PENDING | 41750149 ⏳ PENDING (dependency) | | | | | |
+
+**Pre-flight 41758026 passed** (2026-09-11, 4 m 20 s of a 30 m limit; `fast_dev_run` stops at one
+train + one val batch, so minutes are the expected scale and no runtime projection comes out of it).
+Both positive controls hold: the log reports `tla ok, has_cuda: True`, so the JV device solver built
+and imported, and `ModelSummary` reports 819 K trainable parameters. Training 41758027 started
+14:14:30 on the `afterok` dependency with a 14 h limit taken from the measured 367 ms step.
+
+Run 2 has not been scheduled: 41750148 has been PENDING on `(Priority)` since 11:43 and 41750149
+waits behind its dependency. It is the only run with a same-hardware paper-tag reference, so the
+reproduction verdict stays open until it lands.
