@@ -1,5 +1,7 @@
 ## Running the model
 
+On UF HiPerGator see [README_HPG.md](./README_HPG.md) for the submit scripts and data location.
+
 ```shell
 cd hepattn
 apptainer shell --nv --bind /share/ pixi.sif

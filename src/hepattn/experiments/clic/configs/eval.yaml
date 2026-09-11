@@ -1,0 +1,19 @@
+# Evaluation overlay: pass AFTER the run's config, e.g.
+#   python main.py test --config logs/<run>/config.yaml --config configs/eval.yaml --ckpt_path <ckpt>
+# Applies the README's evaluation rules: fp32, torch attention, inference-mode data, no Compile.
+trainer:
+  precision: 32-true
+  callbacks:
+    - class_path: hepattn.callbacks.InferenceTimer
+    - class_path: hepattn.experiments.clic.PflowPredictionWriter
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+      init_args:
+        refresh_rate: 50
+model:
+  model:
+    encoder:
+      attn_type: torch
+data:
+  is_inference: true
+  num_workers: 4
+matmul_precision: highest
