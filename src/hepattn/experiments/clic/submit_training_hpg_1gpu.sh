@@ -47,7 +47,7 @@ CONFIG_PATH="configs/base.yaml"
 PYTORCH_CMD="python main.py fit --config $CONFIG_PATH --trainer.devices=1"
 
 # Pixi command that runs the python command inside the pixi env
-PIXI_CMD="pixi run $PYTORCH_CMD"
+PIXI_CMD="pixi run -e clic $PYTORCH_CMD"
 
 # Apptainer command that runs the pixi command inside the pixi apptainer image
 APPTAINER_CMD="srun apptainer run --nv --bind /blue/,/cmsuf/ /blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif $PIXI_CMD"

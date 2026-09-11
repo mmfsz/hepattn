@@ -42,7 +42,7 @@ PYTORCH_CMD="python main.py test \
   --trainer.num_nodes=1 \
   --ckpt_path $CKPT"
 
-PIXI_CMD="pixi run $PYTORCH_CMD"
+PIXI_CMD="pixi run -e clic $PYTORCH_CMD"
 
 APPTAINER_CMD="apptainer run --nv --bind /blue/,/cmsuf/ /blue/avery/m.mazza/projects/fastml/hepattn/pixi.sif $PIXI_CMD"
 

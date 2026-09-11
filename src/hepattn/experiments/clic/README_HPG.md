@@ -12,7 +12,7 @@ on UF's HiPerGator cluster. For the model/paper overview and data-format details
   - `hpg-b200` — B200 192 GB (up to 4/node)
   - `hpg-turin` — L4 24 GB (up to 3/node)
 - **Container + env:** the repo ships a pixi Apptainer image at the repo root
-  (`pixi.sif`). Training runs inside it via `apptainer run --nv ... pixi run ...`;
+  (`pixi.sif`). Training runs inside it via `apptainer run --nv ... pixi run -e clic ...`;
   the submit scripts already do this — you don't need to enter it by hand to submit.
 - **CUDA module:** `module load cuda/12.8.1` (matches the container build; already in the submit scripts).
 
@@ -85,9 +85,10 @@ pixi shell -e clic
 python main.py fit --config configs/clic_v7.yaml --trainer.devices=1
 ```
 
-The submit scripts run in the `default` environment (`pixi run`); the `clic`
-environment is a superset of it that adds the analysis packages, so training works in
-either, and the performance notebooks need `clic`.
+Everything CLIC on HPG uses the `clic` environment: the submit scripts run
+`pixi run -e clic`, and it is the environment to use for the performance notebooks
+too. It is the GPU `default` environment plus the analysis packages, so there is no
+need to install `default` as well (each environment is ~15 GB).
 
 ## Outputs & monitoring
 

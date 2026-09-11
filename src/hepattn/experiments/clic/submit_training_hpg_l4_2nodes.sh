@@ -53,7 +53,7 @@ echo "Using config: $CONFIG_PATH"
 PYTORCH_CMD="python main.py fit --config $CONFIG_PATH --trainer.devices=3 --trainer.num_nodes=2"
 
 # Pixi command that runs the python command inside the pixi env
-PIXI_CMD="pixi run $PYTORCH_CMD"
+PIXI_CMD="pixi run -e clic $PYTORCH_CMD"
 
 # Apptainer command that runs the pixi command inside the pixi apptainer image
 # srun in front for multi-node multi-GPU DDP

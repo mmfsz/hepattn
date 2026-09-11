@@ -47,7 +47,7 @@ CONFIG_PATH="configs/base.yaml"
 PYTORCH_CMD="python main.py fit --config $CONFIG_PATH"
 
 # Pixi command that runs the python command inside the pixi env
-PIXI_CMD="pixi run $PYTORCH_CMD"
+PIXI_CMD="pixi run -e clic $PYTORCH_CMD"
 
 # Apptainer command that runs the pixi command inside the pixi apptainer image
 # srun in front for multi-GPU DDP
