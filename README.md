@@ -41,7 +41,7 @@ due to requirements of recent `torch` versions.
 We use `pixi`'s CUDA image, which you can access with:
 
 ```shell
-apptainer pull pixi.sif docker://ghcr.io/prefix-dev/pixi:0.45.0-noble-cuda-12.6.3
+apptainer pull pixi.sif docker://ghcr.io/prefix-dev/pixi:0.54.1-jammy-cuda-12.8.1
 apptainer shell --nv pixi.sif
 ```
 
@@ -51,8 +51,17 @@ apptainer shell --nv pixi.sif
 You can then install the project with locked dependencies:
 
 ```shell
-pixi install --locked
+pixi install --locked -e clic
 ```
+
+**📝 Note**: The `default` environment targets GPU machines and installs FA2.
+The `clic` environment is `default` plus the CLIC analysis packages (`fastjet`,
+`energyflow`, `vector`, `pathos`), with the same pinned torch and flash-attention
+build, so it can both train and run the jet and substructure analysis; use it for
+anything CLIC. Each environment is about 15 GB, so install only the one you need.
+The lock file is solved with the container's pixi (0.54.1, lock format 6); a newer
+host pixi rewrites it in a format the container cannot read, so re-solve the lock
+only inside the container (`apptainer exec pixi.sif pixi lock`).
 
 ### The `lap1015` Extension
 
@@ -144,7 +153,9 @@ and follow the instructions it prints (put the build on `PYTHONPATH`, with
 `LD_LIBRARY_PATH` pointing at the environment's `lib`). The script sets the two
 things that go wrong otherwise: `FORCE_CUDA=1`, without which a build on a
 GPU-less login node silently produces a CPU-only extension, and
-`TORCH_CUDA_ARCH_LIST`, since there is no GPU there to detect. `Matcher` checks
+the CUDA architectures to build for (`TLA_CUDA_ARCHS`, default L4 and B200), since
+there is no GPU there to detect and the environment's own `TORCH_CUDA_ARCH_LIST`
+names an architecture torch rejects. `Matcher` checks
 for both failure modes at construction and refuses a missing or CPU-only build.
 The script also patches the kernel's launch geometry for Blackwell GPUs: upstream
 has no block-size entry for compute capability 10, so a B200 fell back to 128
