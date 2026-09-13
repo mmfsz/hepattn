@@ -199,8 +199,9 @@ kernel's 47-84 ms landed in "everything else" -- the next blocking op. Every "ma
 of the step" figure taken with the device solver (jobs 41755411, 41755907, E, F, and the
 `studies/model_size` and `README_HPG.md` sentences built on them) is that artifact. Fixed in
 `matcher-timer-device-sync` (merged 2026-09-13): the device bucket now synchronises after the call.
-Validation run I (**42006692**, E's setup with the fixed timer) should read ~84 ms in the device
-bucket.
+Validation run I (**42006692**, E's setup with the fixed timer) reads **90.4 ms median in the
+device-solver bucket, 30.7% of a 294 ms step** (std 5.5 ms; the profiler's 84 ms was six
+steps). The synchronised timer and the trace agree.
 
 **Why the kernel is data-dependent.** `torch_linear_assignment_cuda_kernel.cu` runs one thread per
 assignment problem (`i = blockDim.x * blockIdx.x + threadIdx.x`, `if (i >= bs) return`), each
