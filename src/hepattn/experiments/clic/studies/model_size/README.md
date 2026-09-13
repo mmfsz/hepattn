@@ -98,22 +98,34 @@ samples/s), head-v7's pace; without any compilation it ran at 1.74 it/s over the
 **Round 1, resubmitted 2026-09-11 on ae43410** (14 h requested from the 10.4 h projection, each
 full run chained `afterok` behind a named pre-flight):
 
-| Arm | Pre-flight | Full run |
-|---|---|---|
-| reference (B200, jv) | 41758026 | 41758027 |
-| C5 a2a4 | 41758028 | 41758029 |
-| C4 a3a4 | 41758030 | 41758031 |
-| C3 a2a3 | 41758032 | 41758033 |
-| C1 a2a3a4 | 41758034 | 41758035 |
+| Arm | Pre-flight | Full run | params | ms/step | wall time | state |
+|---|---|---|---|---|---|---|
+| reference (B200, jv) | 41758026 | 41758027 | 819,683 | 311 | 8 h 59 | COMPLETED |
+| C5 a2a4 | 41758028 | 41758029 | 616 K | 300 | 8 h 42 | COMPLETED |
+| C4 a3a4 | 41758030 | 41758031 | 443 K | 292 | 8 h 11 | COMPLETED |
+| C3 a2a3 | 41758032 | 41758033 | n/a¹ | 278 | 8 h 01 | COMPLETED |
+| C1 a2a3a4 | 41758034 | 41758035 | 352 K | 278 | 8 h 15 | COMPLETED |
+
+¹ 41758033's log lost its header to the same `srun: error: unpack_header: protocol_version 515
+not supported` that truncated 41758027's stdout at epoch 57. Both jobs themselves were fine —
+`metrics.csv` runs to epoch 199 and the last checkpoint is there. **Trust `metrics.csv` over the
+progress bars for this batch.**
+
+**All five completed 2026-09-11/12, none near its limit.** 14 h was requested from the
+preflight's 10.4 h projection; the measurement is 8 h 01 to 8 h 59, so the driver now asks for
+12 h (1.3x the reference arm). The step time orders exactly with parameter count, and every arm
+sits 11-24% above its head-v7 counterpart at the same geometry (235-255 ms/step). That offset is
+not the arms, and it is **not** `Dense`'s gated SwiGLU default either: `studies/swiglu_silu/`
+tested exactly that and found no step-time difference. It is unexplained, and it applies to every
+arm equally, so arm-against-arm comparisons within this study are unaffected.
 
 
 The arm preflights were submitted without a distinguishing `--name`, so each arm has TWO run
 folders: the earlier one (12:15-12:24) is the preflight (`fast_dev_run`, no checkpoints), the
 later one (13:03 onwards) is the full run. Name preflights `pf_<run>` from now on.
 
-All ten submitted 2026-09-11 against commit 47645e1 of `clic-paper-main`; each full run is chained
-`afterok` behind its pre-flight (30 min), and the full runs were trimmed to 9 h 59 m on the B200 from the head-v7 measurement. That was
-wrong for this code: the first epochs run at 7 min each, i.e. 24 h for 200 epochs, so these
-runs will hit their limit near epoch 80 and must be resumed from `last.ckpt`. Diagnostic
-runs 41755411 (jv) / 41755412 (host) with `MatcherTimer` attribute the step time. If a pre-flight fails,
-cancel the matching full run (`scancel <job>`), fix, resubmit both.
+That paragraph described the **cancelled** round, whose 9 h 59 m limit came from the head-v7
+measurement and would have truncated runs stepping at 790 ms near epoch 80. The compile fix
+removed the 790 ms step, and the resubmitted round finished inside 9 h with no resume needed.
+Diagnostic runs 41755411 (jv) / 41755412 (host) with `MatcherTimer` attribute the step time. If a
+pre-flight fails, cancel the matching full run (`scancel <job>`), fix, resubmit both.

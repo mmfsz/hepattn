@@ -109,12 +109,31 @@ same model, on the same hardware, through the ported environment and the lap1015
 the same physics. Run 1 is 0.002–0.004 worse in most bins, consistent with its higher val_loss
 and its different batch geometry; the shape is unchanged.
 
-Plots (all four algorithms, six figures) are in the paper clone's notebook:
+Plots (all four algorithms, six figures) are in `figures/`, written by `performance.ipynb` in the
+paper clone,
 `/home/m.mazza/blue/projects/fastml/hepattn-clic-paper/src/hepattn/experiments/clic/notebooks/`,
-`performance.ipynb` with its executed output and `outputs_paper_tag_repro/`. The notebook reads
-this branch's ROOT files, so it needed the RNTuple branch-name support from `main`'s reader
-(paper-tag uproot wrote a flat TTree, the new one writes an RNTuple); as a positive control it
-reproduces the reference's recorded 0.078 → 0.050 exactly.
+whose `plot_path` points here. That notebook is the shared tool with a HiPerGator config cell
+added; the figures are this study's, so they live here rather than next to it. It reads this
+branch's ROOT files, so it needed the RNTuple branch-name support from `main`'s reader (paper-tag
+uproot wrote a flat TTree, the new one writes an RNTuple); as a positive control it reproduces
+the reference's recorded 0.078 → 0.050 exactly.
+
+| figure | what it shows |
+|---|---|
+| `jet_response.png` | jet-E median, IQR and IQR/response against truth jet E — the reproduction plot |
+| `jet_residuals.png` | jet pT, E, constituent-count and ΔR residuals |
+| `jet_residuals_boxplot.png` | jet residual spread per pT bin |
+| `event_response.png` | MET, HT and charged/neutral constituent-count residuals |
+| `residuals_all.png` | per-particle residuals, charged and neutral |
+| `residuals_neutrals.png` | per-particle residuals, neutral hadrons and photons |
+
+### Why run 1 is slower than head
+
+Not known. `studies/swiglu_silu/` isolated the leading candidate — `Dense`'s activation, gated
+SwiGLU here against plain SiLU on `main`, across all 14 transformer feed-forwards — and ruled it
+out on timing: two 300-step B200 pre-flights at one commit, 819,683 against 703,203 parameters,
+within 6% of each other. That study continues for the *physics* half of the question, since
+SwiGLU is also a jet-E IQR suspect from `main`'s `glow_jet_iqr` bisect.
 
 **Pre-flight 41758026 passed** (2026-09-11, 4 m 20 s of a 30 m limit; `fast_dev_run` stops at one
 train + one val batch, so minutes are the expected scale and no runtime projection comes out of it).
@@ -133,9 +152,10 @@ Two points of comparison, neither of them a problem:
   unexplained — but it is favourable and the evaluation agrees with it: run 2's IQR is slightly
   *better* than the reference's in every bin, by about the same small margin.
 - Run 1 against the head-based v7 model at the same geometry (7 h 26–7 h 40): **8 h 59, a quarter
-  slower per step**. That is the paper model, not the harness — `Dense` defaults to gated SwiGLU
-  here and to plain SiLU on head, so every MLP's inner projection is twice as wide (819K
-  parameters against 702K, 311 ms/step against 251–255). Recorded in `README_HPG.md`.
+  slower per step** (311 against 251–255 ms/step). The cause is open. The obvious candidate, that
+  this model is 819K parameters against v7's 702K because `Dense` defaults to gated SwiGLU here
+  and to plain SiLU on head, was tested in `studies/swiglu_silu/` and **refuted**: removing those
+  116,480 parameters did not move the step time. Recorded in `README_HPG.md`.
 
 ### The evaluation path did not work on this branch
 

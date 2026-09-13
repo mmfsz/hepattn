@@ -69,8 +69,34 @@ For the physics, evaluate with `submit_eval_l4.sh` and read the proxy jet-E IQR 
 
 ## Status
 
-| # | job | state | params | ms/step | wall time | notes |
-|---|---|---|---|---|---|---|
-| PF-ctl | 41992197 | submitted 2026-09-13 | | | | |
-| PF-silu | 41992198 | submitted 2026-09-13 | | | | |
-| Full | 41992199 | queued on `afterok:41992198` | | | | |
+| # | job | state | params | ms/step (steps 200→300) | notes |
+|---|---|---|---|---|---|
+| PF-ctl | 41992197 | ✅ 5 m 46 | **819,683** | **360** | 150→300: 367 |
+| PF-silu | 41992198 | ✅ 6 m 17 | **703,203** | **380** | 150→300: 380 |
+| Full | 41992199 | queued on `afterok:41992198` | 703,203 | | physics arm |
+
+### Question 1 (timing): the answer is no
+
+**The activation does not explain the step time.** Both pre-flights ran at commit 52b1843 on a
+B200, both compiled encoder and decoder identically, and `ModelSummary` confirms the arm applied
+(819,683 → 703,203). Cutting **14% of the parameters bought nothing**: the smaller model was if
+anything marginally *slower*. That is the falsification condition this study wrote down in
+advance, so the SwiGLU explanation for the 311 vs 251 ms/step paper-vs-head gap is dead, and
+`README_HPG.md` no longer states it.
+
+Read the step time from the tail, not the 300-step average: the average includes a one-time
+compile, which is why the progress bar's cumulative figure (1.44 vs 1.34 it/s) is both higher
+and in the other direction. Between steps 200 and 300 the two are within 6%.
+
+Pre-flight numbers run high in absolute terms — the reference's pre-flight read 367 ms/step where
+its full run did 311 — but that bias applies to both arms equally, which is the point of running
+the control on the same day at the same commit. 41992199 will give a steady-state figure for the
+SiLU arm to compare against the reference's measured 311.
+
+**Leading explanation, untested:** at dim 64 the step is probably bound by kernel launches and
+memory traffic rather than feed-forward arithmetic, so trimming MLP width does not show up. If so,
+the paper-vs-head gap lives somewhere else — the norm/decoder rewrite and the incidence-head width
+are the remaining post-paper changes, and neither has been isolated.
+
+Question 2, the physics, is unaffected: 41992199 is still the first clean single-variable test of
+the SwiGLU suspect from `main`'s `glow_jet_iqr` bisect, and it is now the *only* reason to run it.
