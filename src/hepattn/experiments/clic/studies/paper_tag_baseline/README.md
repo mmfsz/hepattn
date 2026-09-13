@@ -85,8 +85,11 @@ different code) at the same geometry and matcher: job **40405423**, 7 h 40 m on 
 
 | # | Pre-flight | Training | Eval | val_loss (best ep) | wall time | proxy IQR low→high | verdict |
 |---|---|---|---|---|---|---|---|
-| 1 B200 JV | 41758026 ✅ | 41758027 ⏳ RUNNING | | | | | |
-| 2 3×L4 lap1015 | 41750148 ⏳ PENDING | 41750149 ⏳ PENDING (dependency) | | | | | |
+| 1 B200 JV | 41758026 ✅ | 41758027 ✅ | 41987203 | 4.4089 (ep 199) | 8 h 59 | | |
+| 2 3×L4 lap1015 | 41750148 ✅ | 41750149 ✅ | 41987204 | 4.2935 (ep 199) | 15 h 07 | | |
+
+Run 2's folder is `logs/clic_paper_small_l4_lap1015_20260911-T191856`. Both trainings ran all
+200 epochs and both best checkpoints are the last one, so neither had started to overfit.
 
 **Pre-flight 41758026 passed** (2026-09-11, 4 m 20 s of a 30 m limit; `fast_dev_run` stops at one
 train + one val batch, so minutes are the expected scale and no runtime projection comes out of it).
@@ -94,6 +97,39 @@ Both positive controls hold: the log reports `tla ok, has_cuda: True`, so the JV
 and imported, and `ModelSummary` reports 819 K trainable parameters. Training 41758027 started
 14:14:30 on the `afterok` dependency with a 14 h limit taken from the measured 367 ms step.
 
-Run 2 has not been scheduled: 41750148 has been PENDING on `(Priority)` since 11:43 and 41750149
-waits behind its dependency. It is the only run with a same-hardware paper-tag reference, so the
-reproduction verdict stays open until it lands.
+**Both trainings completed 2026-09-11/12.** Run 1 took 8 h 59 (311 ms/step), run 2 15 h 07.
+
+Two points of comparison, neither of them a problem:
+
+- Run 2 against its same-hardware reference: **val_loss 4.2935 against 4.3716**, i.e. 0.078
+  *better*, which is outside the ~0.01–0.03 scatter head showed between same-config runs. The two
+  differ by the matcher (lap1015_late instead of scipy) and the software stack, and run 2 also
+  finished 4 h 55 sooner. σ_repro has not been measured on this code, so treat the gap as
+  unexplained-but-favourable until the evaluation says whether the physics moved with it.
+- Run 1 against the head-based v7 model at the same geometry (7 h 26–7 h 40): **8 h 59, a quarter
+  slower per step**. That is the paper model, not the harness — `Dense` defaults to gated SwiGLU
+  here and to plain SiLU on head, so every MLP's inner projection is twice as wide (819K
+  parameters against 702K, 311 ms/step against 251–255). Recorded in `README_HPG.md`.
+
+### The evaluation path did not work on this branch
+
+Neither run could be evaluated until three faults in the ported code were fixed (branches
+`fix-eval-path` and `port-inference-timer-warmstart`, merged 2026-09-13); all three came in with
+the port, not from the tag:
+
+1. `predictionwriter.py` passed `jets_name=` to `ftag.hdf5.H5Writer`. The tag does not pin
+   `atlas-ftag-tools`, so the new environment solved to 0.3.5, where that argument is
+   `global_objects_name`. Every `main.py test` died in the first `on_test_batch_end` and wrote
+   nothing. Head is unaffected because it pins `atlas-ftag-tools>=0.2.9,<0.3`.
+2. A run trained with `device_solver: jv` could not be evaluated on an L4, because its config
+   still named the solver and the torch-linear-assignment build is per-architecture — even
+   though the matching never runs at test time. `configs/eval.yaml` now clears `device_solver`.
+3. `InferenceTimer.on_test_end` dropped ten warm-up forward passes and then raised
+   `ValueError: No times recorded.` if none were left. At batch 2048 the 19,722-event test set is
+   ten batches, so run 1 aborted every time — after writing the 2.4 GB HDF5 file, but before the
+   prediction writer converted it to ROOT, so the run produced no usable output. `main` already
+   had that guard; it had not been ported. Run 2, at batch 170, has ~116 batches and never hit it.
+
+Failed attempts: 41986321/41986322 (fault 1; 41986321 hit fault 2 first) and 41987203 (fault 3).
+The evaluations of record are **41987838** (run 1) and **41987204** (run 2), each about 1 min 15
+on one L4, well inside the script's 30 min limit.
