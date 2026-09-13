@@ -14,8 +14,10 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=150G
 # --time: 3x L4, batch 170 x 2 accumulation, host matcher, 200 epochs of the paper's small model:
-# measured 20 h 02 (job 39236741, scipy solver, paper clone). 1.3x, rounded up to the hour.
-# The full paper model on 6 L4 took 19 h 05 (job 37233919). See README_HPG.md, Measured runtimes.
+# measured 20 h 02 (job 39236741, scipy solver, paper clone), 15 h 07 with lap1015_late on this
+# code (job 41750149). 1.3x the slower of the two, rounded up to the hour, because this script
+# also launches runs that keep the scipy solver. The full paper model on 6 L4 took 19 h 05
+# (job 37233919). See README_HPG.md, Measured runtimes.
 #SBATCH --time=27:00:00
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=mmazza@fsu.edu
