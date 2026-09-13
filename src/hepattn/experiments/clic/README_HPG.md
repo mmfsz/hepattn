@@ -119,14 +119,22 @@ For orientation only, the head-based v7 model (0.70M) at the B200 geometry took 
 7 h 40 with the GPU matcher and 23 h 15 with the host matcher (`main`, README_HPG.md there).
 Expect this code to stay about a quarter slower per step than those numbers at the same
 geometry, and budget for it: 311 ms/step here against 251-255 ms/step for the head model.
-**Why is open.** The obvious candidate -- that the paper's model is 819K parameters against
-v7's 702K because `Dense` defaults to gated SwiGLU here and to plain SiLU on head -- was
-tested and does **not** explain it: two 300-step B200 pre-flights at one commit, 819,683
-against 703,203 parameters, stepped within 6% of each other (jobs 41992197 / 41992198,
-`studies/swiglu_silu/`). At this width the step is evidently not bound by the feed-forward
-arithmetic. Separate from all of that, the paper's `Compile` callback compiled the whole
-model as one graph and stepped a further 2.2x slower on a B200 until it was replaced by
-head's encoder/decoder compile; a run that steps near 790 ms is hitting that, not this.
+**The difference is the GPU matcher's kernel, not the model code.** Profiled at the trained
+state (resumed from the epoch-199 checkpoints, jobs 42005058/42005059), the Jonker-Volgenant
+kernel takes 84 ms per step on this model's cost matrices against 47 ms on head's; every
+other kernel class agrees. The kernel runs one assignment problem per thread and its
+Dijkstra loop count is set by the cost matrix, so its time depends on the trained model --
+it is 170 ms per step on a fresh model, falls over the first 40 epochs (the per-epoch time
+curve every run shows), and settles higher for this model than for head's. That is also
+why a 300-step pre-flight cannot see the difference: fresh models of both codes step at
+360 ms. The obvious model-side candidate, `Dense`'s gated SwiGLU, was tested and does not
+move the step (jobs 41992197 / 41992198, `studies/swiglu_silu/`); the environment does not
+either. Before 2026-09-13 `MatcherTimer` reported the device solver at ~0.5% of the step;
+that was the launch time of an asynchronous kernel, fixed the same day. See
+`studies/step_time_gap/`. Separate from all of that, the paper's `Compile` callback compiled
+the whole model as one graph and stepped a further 2.2x slower on a B200 until it was
+replaced by head's encoder/decoder compile; a run that steps near 790 ms is hitting that,
+not this.
 
 **No measurement for your case?** Run a preflight and project. Submit the training script
 with a short step cap and a short limit, then read the projection off its log:
