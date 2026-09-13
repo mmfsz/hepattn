@@ -93,10 +93,10 @@ its full run did 311 — but that bias applies to both arms equally, which is th
 the control on the same day at the same commit. 41992199 will give a steady-state figure for the
 SiLU arm to compare against the reference's measured 311.
 
-**Leading explanation, untested:** at dim 64 the step is probably bound by kernel launches and
-memory traffic rather than feed-forward arithmetic, so trimming MLP width does not show up. If so,
-the paper-vs-head gap lives somewhere else — the norm/decoder rewrite and the incidence-head width
-are the remaining post-paper changes, and neither has been isolated.
+**Resolved by `studies/step_time_gap/` (2026-09-13):** the gap is the GPU matcher kernel's
+data-dependent solve time on the *trained* model's cost matrices (84 vs 47 ms/step), which no
+300-step pre-flight can see -- fresh models of both codes step at 360 ms. Whether the activation
+changes the trained cost matrices is what 41992199's epoch-time curve will show.
 
 Question 2, the physics, is unaffected: 41992199 is still the first clean single-variable test of
 the SwiGLU suspect from `main`'s `glow_jet_iqr` bisect, and it is now the *only* reason to run it.

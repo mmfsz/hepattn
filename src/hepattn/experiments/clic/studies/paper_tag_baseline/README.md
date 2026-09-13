@@ -129,7 +129,11 @@ the reference's recorded 0.078 → 0.050 exactly.
 
 ### Why run 1 is slower than head
 
-Not known. `studies/swiglu_silu/` isolated the leading candidate — `Dense`'s activation, gated
+**Found (`studies/step_time_gap/`, 2026-09-13): the GPU Jonker-Volgenant kernel takes 84 ms per
+step on this model's cost matrices against 47 ms on head's, at the trained state; every other
+kernel class is equal, the environment and logger are not involved, and fresh models of both
+codes step at the same 360 ms over 300 steps.** The earlier note below stands as the history.
+`studies/swiglu_silu/` isolated the leading model-side candidate — `Dense`'s activation, gated
 SwiGLU here against plain SiLU on `main`, across all 14 transformer feed-forwards — and ruled it
 out on timing: two 300-step B200 pre-flights at one commit, 819,683 against 703,203 parameters,
 within 6% of each other. That study continues for the *physics* half of the question, since

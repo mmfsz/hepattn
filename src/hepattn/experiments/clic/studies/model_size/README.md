@@ -83,7 +83,8 @@ brought over from `main`'s study once the first results exist.
 
 **Round 1 cancelled 2026-09-11.** The runs stepped at 790 ms (7 min/epoch, 24 h projected) against
 head-v7's 360 ms at the same geometry, with the matcher at 0.5% of the step (`MatcherTimer`, job
-41755411) and the GPU saturated. The paper code on 3x L4 (job 39236741) was *faster* per GPU than
+41755411 -- a figure since found to be the kernel's *launch* time, see `studies/step_time_gap/`)
+and the GPU saturated. The paper code on 3x L4 (job 39236741) was *faster* per GPU than
 head-v7, so the loss is specific to the B200 + torch 2.9 stack; the leading suspect is the tag's
 Compile callback compiling the whole model as one graph and losing autocast (the attention bf16
 cast exists for exactly that failure). Diagnostics 41755907 (stacked matching + head's compile),
@@ -92,8 +93,9 @@ profiler). **Cause found and fixed the same day.** The paper's `Compile` callbac
 one dynamic graph; head's compiles only the encoder and decoder, after the sanity check. With
 head's callback (merged as dd72cd1) the same run steps at **367 ms** (job 41755907, 5,582
 samples/s), head-v7's pace; without any compilation it ran at 1.74 it/s over the first 300 steps
-(job 41756034), so the whole-model graph was actively slower than eager. The matcher stays at
-0.4% of the step.
+(job 41756034), so the whole-model graph was actively slower than eager. (`MatcherTimer` read
+the matcher at 0.4% of the step here; that was the asynchronous launch, not the solve --
+`studies/step_time_gap/`.)
 
 **Round 1, resubmitted 2026-09-11 on ae43410** (14 h requested from the 10.4 h projection, each
 full run chained `afterok` behind a named pre-flight):
@@ -116,8 +118,10 @@ preflight's 10.4 h projection; the measurement is 8 h 01 to 8 h 59, so the drive
 12 h (1.3x the reference arm). The step time orders exactly with parameter count, and every arm
 sits 11-24% above its head-v7 counterpart at the same geometry (235-255 ms/step). That offset is
 not the arms, and it is **not** `Dense`'s gated SwiGLU default either: `studies/swiglu_silu/`
-tested exactly that and found no step-time difference. It is unexplained, and it applies to every
-arm equally, so arm-against-arm comparisons within this study are unaffected.
+tested exactly that and found no step-time difference. `studies/step_time_gap/` found it: the GPU
+JV kernel's time depends on the trained model's cost matrices (84 ms/step for the paper model
+against 47 for head's), so it applies to every arm, and arm-against-arm comparisons within this
+study are unaffected.
 
 
 The arm preflights were submitted without a distinguishing `--name`, so each arm has TWO run
