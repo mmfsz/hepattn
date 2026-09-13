@@ -77,8 +77,13 @@ class MatcherTimer(Callback):
         if torch.cuda.is_available():
             torch.cuda.synchronize()
 
-    def _timed(self, fn, bucket: str, sync_first: bool = False):
-        """Wrap a bound method so its wall time accumulates into ``bucket``."""
+    def _timed(self, fn, bucket: str, sync_first: bool = False, sync_after: bool = False):
+        """Wrap a bound method so its wall time accumulates into ``bucket``.
+
+        ``sync_after`` is for work that only launches kernels and returns: without a trailing
+        synchronize the bucket records the launch, and the kernel's time lands in whatever
+        blocks on it next.
+        """
 
         def wrapper(*args, **kwargs):
             if sync_first:
@@ -87,6 +92,8 @@ class MatcherTimer(Callback):
             try:
                 return fn(*args, **kwargs)
             finally:
+                if sync_after:
+                    self._sync()
                 self._step_bucket[bucket] += time.perf_counter() - start
 
         return wrapper
@@ -119,7 +126,9 @@ class MatcherTimer(Callback):
             matcher._prepare_costs = self._timed(saved["_prepare_costs"], "prep")  # noqa: SLF001
             matcher._stage_to_host = self._timed(saved["_stage_to_host"], "dtoh")  # noqa: SLF001
             matcher._solve = self._timed(saved["_solve"], "solve")  # noqa: SLF001
-            matcher._match_on_device = self._timed(saved["_match_on_device"], "device")  # noqa: SLF001
+            # The device solver is a single asynchronous kernel launch; time it to completion,
+            # or the bucket reads ~2 ms whatever the solve costs.
+            matcher._match_on_device = self._timed(saved["_match_on_device"], "device", sync_after=True)  # noqa: SLF001
 
         print(f"MatcherTimer: instrumented {len(self._matchers)} matcher(s); discarding {self.warmup_steps} warmup steps.")
 
