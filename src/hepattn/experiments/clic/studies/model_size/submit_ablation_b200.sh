@@ -21,10 +21,11 @@
 #SBATCH --ntasks-per-node=1        # must match trainer.devices
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=60G
-# --time: 1x B200, jv matcher, 200 epochs of the paper's small model: 367 ms/step measured over
-# 300 steps (job 41755907, 2026-09-11) x 486 steps x 200 epochs = 9.9 h, +5% validation = 10.4 h;
-# 1.3x rounded up to the hour. Replace with the wall time of the first completed run.
-#SBATCH --time=14:00:00
+# --time: 1x B200, jv matcher, 200 epochs of the paper's small model: 8 h 59 measured
+# (job 41758027, 2026-09-11, 311 ms/step); 1.3x rounded up to the hour. The 300-step
+# preflight this replaces read 367 ms/step and projected 10.4 h, which is the bias
+# project_runtime.py warns about.
+#SBATCH --time=12:00:00
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=mmazza@fsu.edu
 #SBATCH --output=/blue/avery/m.mazza/projects/fastml/hepattn-paper/src/hepattn/experiments/clic/slurm_logs/slurm-%j.%x.out
