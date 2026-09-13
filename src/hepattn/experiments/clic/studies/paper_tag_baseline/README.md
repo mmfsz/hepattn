@@ -85,11 +85,36 @@ different code) at the same geometry and matcher: job **40405423**, 7 h 40 m on 
 
 | # | Pre-flight | Training | Eval | val_loss (best ep) | wall time | proxy IQR low→high | verdict |
 |---|---|---|---|---|---|---|---|
-| 1 B200 JV | 41758026 ✅ | 41758027 ✅ | 41987203 | 4.4089 (ep 199) | 8 h 59 | | |
-| 2 3×L4 lap1015 | 41750148 ✅ | 41750149 ✅ | 41987204 | 4.2935 (ep 199) | 15 h 07 | | |
+| 1 B200 JV | 41758026 ✅ | 41758027 ✅ | 41987838 ✅ | 4.4089 (ep 199) | 8 h 59 | 0.082 → 0.053 | **reproduced** |
+| 2 3×L4 lap1015 | 41750148 ✅ | 41750149 ✅ | 41987204 ✅ | 4.2935 (ep 199) | 15 h 07 | 0.079 → 0.048 | **reproduced** |
+| — reference | | 39236741 | 39352893 | 4.3716 (ep 196) | 20 h 02 | 0.078 → 0.050 | |
 
 Run 2's folder is `logs/clic_paper_small_l4_lap1015_20260911-T191856`. Both trainings ran all
 200 epochs and both best checkpoints are the last one, so neither had started to overfit.
+
+**Both runs reproduce the paper's shape.** Proxy jet-E IQR per 20 GeV bin of truth jet energy,
+`mpflow_proxy`, `ind_threshold` 0.65, `dr_cut` 0.1, two leading jets, `pt_min` 10:
+
+| E [GeV] | 0–20 | 20–40 | 40–60 | 60–80 | 80–100 | 100–120 | 120–140 | 140–160 | 160–180 | 180–200 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| reference 39236741 | 0.0784 | 0.0648 | 0.0608 | 0.0603 | 0.0583 | 0.0605 | 0.0576 | 0.0590 | 0.0585 | 0.0499 |
+| run 2, 3×L4 lap1015 | 0.0788 | 0.0640 | 0.0584 | 0.0583 | 0.0567 | 0.0598 | 0.0566 | 0.0576 | 0.0561 | 0.0478 |
+| run 1, B200 JV | 0.0821 | 0.0683 | 0.0609 | 0.0595 | 0.0571 | 0.0621 | 0.0568 | 0.0562 | 0.0610 | 0.0528 |
+| Pandora | 0.0911 | 0.0758 | 0.0682 | 0.0641 | 0.0609 | 0.0625 | 0.0594 | 0.0603 | 0.0563 | 0.0538 |
+
+The IQR **falls** with energy in all three, and all three sit below Pandora up to ~160 GeV and
+converge with it above — the paper's behaviour, and the opposite of head's rising curve. Run 2
+tracks its reference to within 0.001–0.003 in every bin, which is the point of the exercise: the
+same model, on the same hardware, through the ported environment and the lap1015 matcher, gives
+the same physics. Run 1 is 0.002–0.004 worse in most bins, consistent with its higher val_loss
+and its different batch geometry; the shape is unchanged.
+
+Plots (all four algorithms, six figures) are in the paper clone's notebook:
+`/home/m.mazza/blue/projects/fastml/hepattn-clic-paper/src/hepattn/experiments/clic/notebooks/`,
+`performance.ipynb` with its executed output and `outputs_paper_tag_repro/`. The notebook reads
+this branch's ROOT files, so it needed the RNTuple branch-name support from `main`'s reader
+(paper-tag uproot wrote a flat TTree, the new one writes an RNTuple); as a positive control it
+reproduces the reference's recorded 0.078 → 0.050 exactly.
 
 **Pre-flight 41758026 passed** (2026-09-11, 4 m 20 s of a 30 m limit; `fast_dev_run` stops at one
 train + one val batch, so minutes are the expected scale and no runtime projection comes out of it).
@@ -104,8 +129,9 @@ Two points of comparison, neither of them a problem:
 - Run 2 against its same-hardware reference: **val_loss 4.2935 against 4.3716**, i.e. 0.078
   *better*, which is outside the ~0.01–0.03 scatter head showed between same-config runs. The two
   differ by the matcher (lap1015_late instead of scipy) and the software stack, and run 2 also
-  finished 4 h 55 sooner. σ_repro has not been measured on this code, so treat the gap as
-  unexplained-but-favourable until the evaluation says whether the physics moved with it.
+  finished 4 h 55 sooner. σ_repro has not been measured on this code, so the gap stays
+  unexplained — but it is favourable and the evaluation agrees with it: run 2's IQR is slightly
+  *better* than the reference's in every bin, by about the same small margin.
 - Run 1 against the head-based v7 model at the same geometry (7 h 26–7 h 40): **8 h 59, a quarter
   slower per step**. That is the paper model, not the harness — `Dense` defaults to gated SwiGLU
   here and to plain SiLU on head, so every MLP's inner projection is twice as wide (819K
