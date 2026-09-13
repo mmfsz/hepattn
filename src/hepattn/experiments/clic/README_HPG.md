@@ -118,10 +118,13 @@ copy a `--time` line from another script. The measurements on this code, all 200
 For orientation only, the head-based v7 model (0.70M) at the B200 geometry took 6 h 28 to
 7 h 40 with the GPU matcher and 23 h 15 with the host matcher (`main`, README_HPG.md there).
 Expect this code to stay about a quarter slower per step than those numbers at the same
-geometry, and budget for it: the paper's model is 819K parameters against v7's 702K because
-`Dense` defaults to gated SwiGLU feed-forwards here and to plain SiLU on head, which makes
-every MLP's inner projection twice as wide. Measured, 311 ms/step against 251-255 ms/step
-for the head model. Separate from that, the paper's `Compile` callback compiled the whole
+geometry, and budget for it: 311 ms/step here against 251-255 ms/step for the head model.
+**Why is open.** The obvious candidate -- that the paper's model is 819K parameters against
+v7's 702K because `Dense` defaults to gated SwiGLU here and to plain SiLU on head -- was
+tested and does **not** explain it: two 300-step B200 pre-flights at one commit, 819,683
+against 703,203 parameters, stepped within 6% of each other (jobs 41992197 / 41992198,
+`studies/swiglu_silu/`). At this width the step is evidently not bound by the feed-forward
+arithmetic. Separate from all of that, the paper's `Compile` callback compiled the whole
 model as one graph and stepped a further 2.2x slower on a B200 until it was replaced by
 head's encoder/decoder compile; a run that steps near 790 ms is hitting that, not this.
 
