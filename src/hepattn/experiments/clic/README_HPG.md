@@ -111,14 +111,19 @@ copy a `--time` line from another script. The measurements on this code, all 200
 |---|---|---|---|---|---|
 | paper model, 12.1M (`base.yaml`) | 6x L4 (2 nodes), batch 170/GPU | scipy | 19 h 05 | 25 h | 37233919 (paper clone) |
 | small, 0.82M (`base_small.yaml`) | 3x L4, batch 170/GPU x 2 accumulation | scipy | 20 h 02 | 27 h | 39236741 (paper clone) |
-| small | 1x B200, batch 2048 | `device_solver: jv` | **projected 10.4 h** from 367 ms/step over 300 steps (5,582 samples/s) | 14 h | 41755907; first full run pending |
+| small | 1x B200, batch 2048 | `device_solver: jv` | **8 h 59** at 311 ms/step | 12 h | 41758027 |
 | small | 1x B200, batch 2048 | host `lap1015_late` | 1,591 ms/step over 300 steps, 84% in the host solve (projected 45 h) | do not use on a B200 | 41755775 |
-| small | 3x L4, batch 170/GPU x 2 accumulation | `lap1015_late` | pending | | 41750149 |
+| small | 3x L4, batch 170/GPU x 2 accumulation | `lap1015_late` | 15 h 07 | 20 h | 41750149 |
 
 For orientation only, the head-based v7 model (0.70M) at the B200 geometry took 6 h 28 to
 7 h 40 with the GPU matcher and 23 h 15 with the host matcher (`main`, README_HPG.md there).
-The paper's code matches them once the encoder and decoder are compiled separately (the
-paper's callback compiled the whole model as one graph and stepped 2.2x slower on a B200).
+Expect this code to stay about a quarter slower per step than those numbers at the same
+geometry, and budget for it: the paper's model is 819K parameters against v7's 702K because
+`Dense` defaults to gated SwiGLU feed-forwards here and to plain SiLU on head, which makes
+every MLP's inner projection twice as wide. Measured, 311 ms/step against 251-255 ms/step
+for the head model. Separate from that, the paper's `Compile` callback compiled the whole
+model as one graph and stepped a further 2.2x slower on a B200 until it was replaced by
+head's encoder/decoder compile; a run that steps near 790 ms is hitting that, not this.
 
 **No measurement for your case?** Run a preflight and project. Submit the training script
 with a short step cap and a short limit, then read the projection off its log:
