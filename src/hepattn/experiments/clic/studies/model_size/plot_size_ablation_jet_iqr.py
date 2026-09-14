@@ -39,6 +39,12 @@ contributes nothing to any difference seen here.
 Binning is the 20 GeV grid head's jet-IQR studies used, kept so the shape of these curves can be
 laid beside those even though the numbers cannot be compared.
 
+PANDORA is drawn on every panel as the grey backdrop, the same identity it carries on the
+performance figures. The pipeline injects it whether or not it is asked for, so it costs nothing to
+show. It is convention-independent -- one set of classical jets, the same curve on the mpflow and
+the mpflow_proxy row -- and it is not an arm: it has no parameter count and never enters an
+arm-vs-reference delta or the sign check. It is the bar the model exists to beat.
+
 Run from the clic experiment dir (via submit_size_plots.sh -- jet clustering wants cores):
     pixi run -e clic python studies/model_size/plot_size_ablation_jet_iqr.py
 """
@@ -55,7 +61,16 @@ mpl.use("Agg")
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, "/blue/avery/m.mazza/projects/fastml/hepattn-paper/src")
-from hepattn.experiments.clic.performance.performance import Performance, PerformanceConfig
+from hepattn.experiments.clic.performance.performance import NetworkType, Performance, PerformanceConfig
+
+# The pipeline injects Pandora under this name, whether or not it is in `networks` -- taken from the
+# enum rather than written out, because it is `pandora` here and `Pandora` on head.
+PANDORA = NetworkType.PANDORA.value
+# The classical reconstruction is the backdrop the arms are measured against, not a sixth arm: grey
+# and unmarked, the same identity it carries on the performance figures. It is convention-INDEPENDENT
+# -- one set of Pandora jets, drawn on both the mpflow and the mpflow_proxy row -- so it never gets a
+# `[branch]` suffix and never enters an arm-vs-reference delta.
+PANDORA_STYLE = {"color": "#888888", "lw": 2.0, "ls": "-", "zorder": 1.5}
 
 OUT = Path(__file__).resolve().parent
 FIG = OUT / "figures"
@@ -172,6 +187,16 @@ print(f"  total matched jets: {len(ref0)}   (across all arms: {min(_counts.value
 
 for row, br in enumerate(BRANCHES):
     a1, a2 = axes[row]
+    if PANDORA in RES:
+        pmed, piqr, pglob, pgmed = curve(PANDORA)
+        pbiqr, pbglob, pbgmed = bootstrap(PANDORA)
+        # Stored once, under its own key: it is the same curve on both rows.
+        results[PANDORA] = (pmed, piqr)
+        boots[PANDORA] = pbiqr
+        globals_[PANDORA] = (pglob, pbglob.std())
+        medians[PANDORA] = (pgmed, pbgmed.std())
+        a1.plot(mids, pmed, label="Pandora", **PANDORA_STYLE)
+        a2.errorbar(mids, piqr, yerr=pbiqr.std(axis=0), label="Pandora", capsize=2, **PANDORA_STYLE)
     for disp, _root, _p in ARMS:
         name = f"{disp} [{br}]"
         if name not in RES:
@@ -262,5 +287,11 @@ print(f"  {'arm':<18} {'params':>9} {'ratio':>7} {'IQR':>8} {'dIQR':>8} {'sigma_
 for disp, _root, p in ARMS:
     g, e = globals_[f"{disp} [mpflow]"]
     print(f"  {disp:<18} {p:>9,} {p / PARAMS[REF]:>6.3f}x {g:>8.4f} {g - gr:>+8.4f} {e:>11.4f}")
+if PANDORA in globals_:
+    # Pandora is the classical reconstruction, so it has no parameter count and no delta-against-
+    # reference in the ablation sense -- it is the bar the whole model exists to beat, printed last
+    # so the arms' spread can be read against it.
+    g, e = globals_[PANDORA]
+    print(f"  {'Pandora':<18} {'--':>9} {'--':>7} {g:>8.4f} {g - gr:>+8.4f} {e:>11.4f}   (classical, not an arm)")
 print("\n  sigma_stat is the test-sample error only. The bar an arm must clear is")
 print("  2*sqrt(2)*sigma_repro, and sigma_repro has not been measured on this code.")

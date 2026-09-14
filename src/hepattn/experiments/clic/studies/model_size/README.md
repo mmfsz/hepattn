@@ -251,6 +251,16 @@ conventions, with bootstrap σ_stat:
 | C4 a3a4 | 443,435 | 0.541× | 0.0926 | +0.0098 | 0.0674 | +0.0073 | 0.0007 |
 | C3 a2a3 | 369,089 | 0.450× | 0.0980 | +0.0153 | 0.0719 | +0.0118 | 0.0007 |
 | C1 a2a3a4 | 352,331 | 0.430× | 0.1006 | +0.0179 | 0.0738 | +0.0137 | 0.0008 |
+| Pandora | — | — | 0.0628 | −0.0199 | 0.0628 | +0.0027 | 0.0004 |
+
+**Pandora crosses the arms in one convention and not the other.** It is the classical
+reconstruction and has no convention of its own — the same 0.0628 appears in both columns — so the
+comparison flips: in `mpflow` Pandora beats every arm including the reference (0.0628 against
+0.0827), while in `mpflow_proxy` the reference beats it (0.0601 against 0.0628) and C5 is level
+with it. That is the concrete reason this study compares against the paper in the **`mpflow_proxy`
+convention only**: the regression head's kinematics are worse than the incidence-head proxy by more
+than the entire size ablation spans. Read the grey line as the bar to beat on the proxy row; on the
+`mpflow` row it is telling you about the regression head, not about model size.
 
 **The resolution ordering is monotone and both conventions agree on every arm** — the sign check
 passes for global IQR and for high-E IQR across all four arms. C1 does not blow the y-range; it is
