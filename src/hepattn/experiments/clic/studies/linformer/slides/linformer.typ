@@ -106,37 +106,58 @@
 ]
 
 
+#let sq(c) = box(width: 34pt, height: 26pt, fill: c, radius: 2pt)
+#let blue = rgb("#CFE0F5")
+#let grey = rgb("#E4E4E4")
+
 #cslide("Linformer: the constituents stop existing")[
-  #flow(90pt, 180pt, 1740pt, gap: 0.7cm)[
+  #flow(90pt, 175pt, 1740pt, gap: 0.6cm)[
     Linformer replaces the 6 constituents by #bold[3 learned summaries]. Summary $A$ is a fixed
-    weighted blend of #emph[all] of them: $K'_A = 0.8 K_1 + 0.7 K_2 + 0.1 K_3 + ...$
+    weighted blend of #emph[all] of them, and the same blend in every event.
   ]
 
-  #at(110pt, 340pt, mat(SUMM, CONST, (
+  #at(110pt, 300pt, mat(SUMM, CONST, (
     (n[0.8], n[0.1], n[0.1]),
     (n[0.7], n[0.2], n[0.1]),
     (n[0.1], n[0.8], n[0.1]),
     (n(fill: warn)[0.2], n(fill: warn)[0.7], n(fill: warn)[0.1]),
     (n[0.1], n[0.1], n[0.8]),
     (n[0.1], n[0.2], n[0.7]),
-  ), cellw: 78pt))
-  #at(110pt, 310pt, text(size: 23pt, fill: muted)[$E$ — 6 constituents × 3 summaries])
+  ), cellw: 74pt, cellh: 46pt))
+  #at(110pt, 272pt, text(size: 22pt, fill: muted)[$E$ — 6 constituents × 3 summaries])
+  #at(110pt, 660pt, box(width: 460pt, text(size: 23pt, fill: muted)[
+    $K'_A = 0.8 K_1 + 0.7 K_2 + 0.1 K_3 + ...$
+  ]))
 
-  #at(590pt, 340pt, box(width: 1240pt)[
-    #set text(size: 27pt)
-    #set list(spacing: 0.7cm)
-    - Scores are now 4 × #bold[3]: each query attends to 3 summaries, not 6 constituents.
-      That is the saving.
-    - #text(fill: warn)[But which column is constituent 4?] It is 0.2 of $A$, 0.7 of $B$ and
-      0.1 of $C$ — a bit of every column, and no column of its own.
-    - The weights depend on the #bold[slot], not on what is in it. The blend is the same in
-      every event.
+  #at(610pt, 290pt, box(width: 1240pt)[
+    #set text(size: 26pt)
+    #show math.equation.where(block: true): set align(left)
+    #text(size: 22pt, fill: muted)[ordinary attention]
+    #v(2pt)
+    $ underbrace(S, 4 times 6) = underbrace(Q, 4 times d) thin underbrace(K^T, d times 6) $
+    #v(14pt)
+    #text(size: 22pt, fill: muted)[Linformer — two steps]
+    #v(2pt)
+    $ underbrace(K', 3 times d) = underbrace(E^T, 3 times 6) thin underbrace(K, 6 times d)
+      quad quad underbrace(S', 4 times 3) = underbrace(Q, 4 times d) thin underbrace(K'^T, d times 3) $
   ])
 
-  #at(110pt, 745pt, box(width: 1740pt, fill: panel-fill, inset: 22pt)[
-    #text(size: 28pt)[#bold[Why the mask cannot come along:] it says "not constituent 4", and
-    after the projection there is no constituent 4 left to exclude. Zeroing a column of $M$ now
-    removes part of everything.]
+  #at(640pt, 620pt, box[
+    #text(size: 22pt, fill: muted)[$S$ — one column per constituent]
+    #v(4pt)
+    #mat(CONST, QUERY, ((sq(blue),) * 6,) * 4, cellw: 52pt, cellh: 38pt, size: 21pt, hdrw: 46pt)
+  ])
+  #at(1040pt, 690pt, text(size: 46pt, fill: muted)[→])
+  #at(1130pt, 620pt, box[
+    #text(size: 22pt, fill: muted)[$S'$ — one column per #text(fill: warn)[summary]]
+    #v(4pt)
+    #mat(SUMM, QUERY, ((sq(grey),) * 3,) * 4, cellw: 52pt, cellh: 38pt, size: 21pt, hdrw: 46pt)
+  ])
+
+  #at(110pt, 895pt, box(width: 1740pt, fill: panel-fill, inset: 20pt)[
+    #text(size: 27pt)[#bold[Why the mask cannot come along:] $M$ is 4 × 6 — it names constituents.
+    $S'$ is 4 × #bold[3]. #text(fill: warn)[Constituent 4 is 0.2 of $A$, 0.7 of $B$, 0.1 of $C$] —
+    a bit of every column and no column of its own, so "not constituent 4" has nothing to point at.]
   ])
 ]
 
