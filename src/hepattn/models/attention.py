@@ -158,10 +158,10 @@ class Attention(nn.Module):
         """Multi-head attention with a choice of backend.
 
         The ``linformer`` backend (see :class:`hepattn.models.linformer.LinformerAttention`) owns its
-        own input/output projections, so this module then creates no ``in_proj``/``out_proj`` and,
-        because the backend never exposes the projected values, no q/k/v norms and no value-residual
-        mix either. ``qkv_norm`` and ``value_residual`` are therefore refused for that backend rather
-        than silently ignored.
+        own input/output projections, so this module creates no ``in_proj``/``out_proj`` for it. The
+        backend holds its own ``bias``, ``qkv_norm`` and ``value_residual``, which are handed to it
+        here and applied to the real tokens, before the sequence projection, so that they mean what
+        they mean for every other backend.
 
         Parameters
         ----------
@@ -170,9 +170,6 @@ class Attention(nn.Module):
         linformer_seq_len : int
             Linformer only: maximum key/value sequence length.
 
-        Raises:
-            ValueError: If the linformer backend is combined with ``value_residual`` or ``qkv_norm``,
-                which it cannot honour because it computes its queries, keys and values internally.
         """
         super().__init__()
         assert dim % num_heads == 0, "num_heads must divide dim."
@@ -190,17 +187,6 @@ class Attention(nn.Module):
         self.is_first_layer = is_first_layer
         self.linformer_proj_dim = linformer_proj_dim
         self.linformer_seq_len = linformer_seq_len
-
-        if attn_type == "linformer" and (value_residual or qkv_norm):
-            # LinformerAttention owns its projections, so this wrapper never holds the q, k and v
-            # these options act on. Creating them anyway would leave parameters that receive no
-            # gradient, which DDP rejects; accepting them silently would let a config claim
-            # behaviour the model does not have. Ask for them explicitly off instead.
-            raise ValueError(
-                "The linformer backend supports neither value_residual nor qkv_norm: it computes its own "
-                "queries, keys and values internally, so there is nothing for them to act on. "
-                "Set both to false on any layer that uses attn_type='linformer'."
-            )
 
         if attn_type != "linformer":
             self.in_proj_weight = nn.Parameter(torch.empty(3 * dim, dim))
@@ -242,6 +228,10 @@ class Attention(nn.Module):
                     k=self.linformer_proj_dim,
                     heads=self.num_heads,
                     dim_head=self.head_dim,
+                    bias=self.bias,
+                    qkv_norm=self.qkv_norm,
+                    value_residual=self.value_residual,
+                    is_first_layer=self.is_first_layer,
                 )
         else:
             self.attn = ATTN_TYPES[attn_type]
@@ -388,7 +378,7 @@ class Attention(nn.Module):
 
         # Linformer does its own projections and returns the output directly
         if self.attn_type == "linformer":
-            return self.attn(q, kv, kv_mask=kv_mask)
+            return self.attn(q, kv, kv_mask=kv_mask, initial_values=initial_values)
 
         # Prepare queries, keys, and values
         q, k, v = self._prepare_qkv(q, kv, initial_values)

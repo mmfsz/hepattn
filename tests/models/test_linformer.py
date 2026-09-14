@@ -54,16 +54,54 @@ def test_linformer_sequence_too_long():
         attn(torch.randn(1, 9, 32))
 
 
-@pytest.mark.parametrize("option", ["value_residual", "qkv_norm"])
-def test_linformer_rejects_options_it_cannot_honour(option):
-    """Options acting on q, k, v must be refused, not ignored.
+def test_linformer_honours_bias():
+    """Bias is a config option like any other; the backend used to hardcode it off."""
+    kwargs = {"dim": 16, "num_heads": 2, "attn_type": "linformer", "linformer_seq_len": 8, "linformer_proj_dim": 4}
+    assert Attention(bias=True, **kwargs).attn.to_q.bias is not None
+    assert Attention(bias=False, **kwargs).attn.to_q.bias is None
 
-    The wrapper holds no q, k or v for the linformer backend, so these once passed silently
-    and a config could ask for value residuals it was never going to get.
-    """
-    with pytest.raises(ValueError, match="linformer"):
-        Attention(dim=16, num_heads=2, attn_type="linformer", linformer_seq_len=8, linformer_proj_dim=4, **{option: True})
 
-    # and are still honoured by every other backend
-    attn = Attention(dim=16, num_heads=2, attn_type="torch", is_first_layer=False, **{option: True})
-    assert hasattr(attn, "value_residual_mix" if option == "value_residual" else "q_norm")
+def test_linformer_honours_qkv_norm():
+    """The norms act on the real tokens, before the sequence projection."""
+    kwargs = {"dim": 16, "num_heads": 2, "attn_type": "linformer", "linformer_seq_len": 8, "linformer_proj_dim": 4}
+    plain = Attention(qkv_norm=False, **kwargs)
+    normed = Attention(qkv_norm=True, **kwargs)
+    assert not hasattr(plain.attn, "q_norm")
+    assert hasattr(normed.attn, "q_norm")
+
+    # The norms must actually be applied, not merely built
+    normed.attn.load_state_dict(plain.attn.state_dict(), strict=False)
+    x = torch.randn(2, 8, 16)
+    assert not torch.allclose(plain(x), normed(x), atol=1e-6)
+
+
+def test_linformer_value_residual():
+    """The first layer supplies the values the later layers mix in, as for the other backends."""
+    kwargs = {"dim": 16, "num_heads": 2, "attn_type": "linformer", "linformer_seq_len": 8, "linformer_proj_dim": 4}
+    first = Attention(value_residual=True, is_first_layer=True, **kwargs)
+    later = Attention(value_residual=True, is_first_layer=False, **kwargs)
+
+    assert not hasattr(first.attn, "value_residual_mix"), "the first layer supplies values, it does not mix them"
+    assert hasattr(later.attn, "value_residual_mix")
+
+    x = torch.randn(2, 8, 16)
+    initial_values = {}
+    first(x, initial_values=initial_values)
+
+    # (B, H, M, Dh): the values of the real tokens, before the sequence projection
+    assert initial_values["v"].shape == (2, 2, 8, 8)
+
+    mixed = later(x, initial_values=initial_values)
+    unmixed = later(x, initial_values=None)
+    assert not torch.allclose(mixed, unmixed, atol=1e-6)
+
+    # and the mix is trained, so it has to receive gradient
+    mixed.sum().backward()
+    assert later.attn.value_residual_mix[0].weight.grad is not None
+
+
+def test_linformer_value_residual_needs_self_attention():
+    """The mix is a per-query weight applied to the values, so the two sequences must be the same length."""
+    attn = Attention(dim=16, num_heads=2, attn_type="linformer", linformer_seq_len=8, linformer_proj_dim=4, value_residual=True, is_first_layer=False)
+    with pytest.raises(AssertionError, match="self-attention"):
+        attn(torch.randn(2, 8, 16), torch.randn(2, 6, 16), initial_values={"v": torch.randn(2, 2, 6, 8)})
