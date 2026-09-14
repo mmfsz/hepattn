@@ -379,6 +379,68 @@ not been measured on this branch. Linformer's real promise here is not speed at
 today's sequence length but a smaller, more regular attention block — the reason
 it is interesting alongside the model-size work.
 
+### 5.1 The FPGA budget: data × data MACs
+
+The multiplies above are the general picture. The number this project is actually
+trying to reduce is narrower, and using the wrong one flips the sign of the answer,
+so it is worth stating exactly. `mac_budget.py` in this directory computes
+everything below; run it rather than re-deriving it.
+
+**The metric.** The scarcest resource on the target FPGA is DSPs, and slide 7 of
+the model-size deck counts what maps onto them: multiplications where **both
+operands come from the event**, so a real multiplier is needed — `Q Kᵀ`,
+`scores · V`, and the mask head's bilinear. A multiplication by a *learned* matrix
+is data × weight and is counted separately; the deck quotes 125.8 M for those
+against 65.5 M of data × data.
+
+**The rule that follows.** Linformer's sequence compression `K' = Eᵀ K` multiplies
+an activation by a learned matrix. It is data × weight. What lands in the DSP
+budget is only the compressed `Q K'ᵀ` and `attn · V'` — which is the whole point:
+the `(n, n)` product becomes `(n, k)`.
+
+| site | baseline | step 1 | avenue 2 |
+| --- | --- | --- | --- |
+| encoder SA | 21.68 | 8.26 | 8.26 |
+| decoder `q_ca` | 12.29 | 12.29 | **4.92** |
+| decoder `q_sa` | 11.52 | 4.92 | 4.92 |
+| decoder `kv_ca` | 12.29 | 12.29 | 12.29 |
+| mask head bilinear | 7.68 | 7.68 | 7.68 |
+| **total, M per event** | **65.45** | **45.43** | **38.06** |
+| | | −31 % | −42 % |
+
+The baseline reproduces the deck's 65.5 M, which is the check that this is the
+same convention and not a parallel one.
+
+#### The trap, recorded because it has already been walked into
+
+Count every MAC equally and the sign reverses at `q_ca`. Per call, ordinary
+attention is 3.07 M and Linformer 2.54 M — a saving of only **0.53 M** — against
+**1.54 M** for the mask projection `M · E`, which reads as a net loss of 1.00 M
+per call, recomputed at every decoder layer since the mask is rebuilt each layer.
+Both numbers are correct, and the conclusion drawn from them is wrong twice over:
+
+- **Bucket.** `E` is learned, so `M · E` is data × weight, as is the key/value
+  compression. Neither competes for the multipliers that 65.45 M counts. On the
+  metric that matters, avenue 2 *removes* 7.37 M of them at `q_ca` and adds
+  5.24 M of data × weight.
+- **`M` is boolean.** `task.py` builds the mask as `sigmoid() >= threshold`, so
+  `M · |E|` is a masked accumulation of `|E|` columns — additions, not
+  multiplications. It needs **no multiplier at all**. The 6.14 M across the four
+  layers is adder and LUT cost, which is real but is not the constrained resource.
+
+So the MAC cost is not the objection to avenue 2. The objection remains the
+degeneracy risk of 11.5: a projected mask that is near-constant across virtual
+tokens cancels in the softmax and does nothing, however cheap it is.
+
+#### One saving that owes nothing to Linformer
+
+Of the mask head's 7.68 M, **6.14 M is its four intermediate predictions**, which
+exist only to drive masked attention; the fifth is the model's output. With
+`mask_attention: false` they can be skipped at inference outright — genuine
+data × data, removed with no approximation and no new mechanism. That is a real
+FPGA saving sitting inside the step-0 question, and it is worth quoting alongside
+whatever step 0 says about the physics.
+
 ## 6. Gotchas worth knowing before reading results
 
 - **Empty virtual tokens still get attention weight.** If a virtual token's real
@@ -601,6 +663,31 @@ as ruled out, not untried.
    of a fixed learned projection, which is exactly the property a mask needs. If one
    of them supports masking cleanly, adopting it beats patching Linformer.
 
+**What each step costs in parameters.** Every Linformer site adds exactly `proj_k` and `proj_v`,
+`2 × seq_len × k = 2 × 168 × 64 = 21,504` parameters, and nothing else — the Q/K/V/output
+projections are the same shapes the ordinary backend uses. So the parameter cost is just the
+number of sites that get a projection, out of the 18 in the model (6 encoder self-attention, plus
+`q_ca`, `q_sa` and `kv_ca` in each of the 4 decoder layers):
+
+| step | what | Linformer sites | added | total | Δ |
+| --- | --- | --- | --- | --- | --- |
+| 0 | baseline, ordinary attention everywhere | 0 | — | 12,065,291 | — |
+| 1 | Linformer where there is no mask (avenue 1) | 10 | +215,040 | 12,280,331 | +1.8 % |
+| 2 | + projected mask `M' = M · E` (avenue 2) | 18 | +387,072 | 12,452,363 | +3.2 % |
+| 3 | per-query `K'` (ruled out above) | 18 | +387,072 | 12,452,363 | +3.2 % |
+
+Two things to read off it. **Steps 2 and 3 are identical in parameters** — the per-query option
+re-uses the same `E`, so what it costs is MACs and activation memory, never weights; and avenue 2's
+mask projection re-uses `E` as well, so it adds none either. **Step 1 costs a little over half of
+step 2** because 10 of the 18 sites carry a projection instead of all 18. Counts are the reference
+config (`dim = 256`); the deck in `slides/` carries the MAC side of the same comparison for the
+820 k model.
+
+*(Measured by instantiating `configs/base.yaml` and `configs/linformer.yaml` directly. The baseline
+reproduces section 10's 12.065 M exactly; the all-sites total does not reproduce section 10's
+12.418 M — this build gives 12.452 M, a 34 k difference that is worth re-checking through the
+LightningCLI path before either number is quoted elsewhere.)*
+
 **What would settle it.** Any candidate has to clear the same bar as the baseline:
 jet-energy IQR that falls with energy, compared against the measured
 reproducibility spread — not validation loss. Anything that only moves `val_loss`
@@ -660,6 +747,7 @@ through a different decision than the mask projection does.
 | `studies/linformer/configs/clic_paper_small_*.yaml` | **the arms that run**, 0.82 M small model, generated by `make_configs.py` |
 | `studies/linformer/configs/eval_linformer.yaml` | the evaluation overlay for any arm containing Linformer |
 | `studies/linformer/make_configs.py` | generates the arms from `configs/base_small.yaml` |
+| `studies/linformer/mac_budget.py` | the data x data MAC budget of 5.1, per site and per arm |
 
 The code itself lives outside this directory: the port is shared code, merged into
 `clic-paper-main` on 2026-09-11 (`a9b1435`, merging `ca90076` and `3033053`). This
@@ -790,6 +878,9 @@ needed at all.
    `w` is near-constant across virtual tokens it cancels in the softmax, the
    projected mask does nothing, and the honest next move is avenue 3 of section 8
    — data-dependent landmarks — rather than a run that looks like a null result.
+   Note what is *not* an objection: the cost. Section 5.1 prices avenue 2 at
+   38.1 M data x data against the baseline's 65.5 M, and the mask projection needs
+   no multiplier at all because the mask is boolean.
 
 ### A concurrent run that informs this
 
