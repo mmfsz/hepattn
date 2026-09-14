@@ -30,6 +30,7 @@ from `configs/base_small.yaml` by `make_arms.py`:
 | A4 enc5 | A4 | 777,627 | 0.949 | 2 |
 | A6 dec3 | A6 | 719,971 | 0.878 | 2 |
 | A2 mlp1x | A2 | 645,859 | 0.788 | 2 |
+| S1 nobidir | S1 | 653,539 | 0.797 | 2 |
 | C5 a2a4 | A2 + A4 | 616,219 | 0.752 | 1 |
 | A3 dim48 | A3 | 467,201 | 0.570 | 2 |
 | C4 a3a4 | A3 + A4 | 443,435 | 0.541 | 1 |
@@ -42,6 +43,10 @@ from `configs/base_small.yaml` by `make_arms.py`:
   regression input 102 and hidden `[96, 96, 96, 48, 24]`; the incidence head follows `dim`),
   `num_heads 8 → 6` so `head_dim` stays 8 (flash-attn needs `head_dim % 8 == 0`).
 - **A4** encoder `num_layers 6 → 5`.
+- **S1** `bidirectional_ca: false` in `decoder_layer_config` — drops the reverse
+  cross-attention `kv_ca` from every decoder layer. Like A6 it is outside the {A2, A3, A4}
+  factorial. It is the only arm that removes an *attention site*, so it is the one that cuts
+  data × data MACs without touching `dim`.
 - **A6** decoder `num_decoder_layers: 4 → 3`. Not part of the {A2, A3, A4} factorial — it varies
   depth, which the factorial holds fixed. Its val_loss is **not comparable** to the reference's:
   the loss sums over the intermediate decoder layers and A6 has one fewer, so a lower number is an
@@ -377,6 +382,11 @@ folder.
 | A3 dim48 | 467,201 | 42122354 | 42122355 |
 | A4 enc5 | 777,627 | 42122356 | 42122357 |
 | A6 dec3 | 719,971 | 42122358 | 42122359 |
+| S1 nobidir | 653,539 | 42149891 | 42149892 |
+
+S1 was added to the round 2026-09-14, after the other four: head trained it and this branch had
+not, so the same "never carried over" gap that A6 had. It is the only arm that removes an
+attention site rather than narrowing one.
 
 Why these four: the three singles make the per-change comparison against head
 measurement-against-measurement rather than fit-against-measurement, which is what the "4× more

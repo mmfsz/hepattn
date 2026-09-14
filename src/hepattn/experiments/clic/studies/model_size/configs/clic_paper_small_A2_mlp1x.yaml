@@ -7,6 +7,7 @@
 #   A3  dim 64 -> 48, the dim-derived head literals scaled by 0.75, num_heads 8 -> 6
 #   A4  encoder num_layers 6 -> 5
 #   A6  decoder num_decoder_layers 4 -> 3
+#   S1  bidirectional_ca off -- drops kv_ca from every decoder layer
 # Everything else, including the training recipe, is the reference's. Compare against the
 # reference run of this study (base_small.yaml at the same geometry), never against head runs.
 #

@@ -5,6 +5,7 @@ Arms (same definitions as the head-based study on main, studies/model_size):
   A3  dim 64 -> 48 (+ dim-derived head literals, num_heads 8 -> 6 so head_dim stays 8)
   A4  encoder num_layers 6 -> 5
   A6  decoder num_decoder_layers 4 -> 3
+  S1  bidirectional_ca off -- drops the reverse cross-attention kv_ca from every decoder layer
   C1 = A2+A3+A4, C3 = A2+A3, C4 = A3+A4, C5 = A2+A4
 The singles A2/A3/A4 are each exactly one change off the reference, so each is comparable to it
 directly; they are what turns the pair measurements into per-change main effects without assuming
@@ -43,6 +44,13 @@ def apply_a3(s):
 def apply_a4(s):
     return sub1(s, "          num_layers: 6\n          dim: *dim\n", "          num_layers: 5                 # A4: encoder 6 -> 5 layers\n          dim: *dim\n")
 
+def apply_s1(s):
+    # `bidirectional_ca` is a MaskFormerDecoderLayer argument, so it belongs in
+    # `decoder_layer_config`, not beside `num_decoder_layers`. The anchor is that key rather than
+    # `hybrid_norm: true`, which appears in the encoder block too.
+    return sub1(s, "        decoder_layer_config:\n          dim: *dim\n",
+                "        decoder_layer_config:\n          dim: *dim\n          bidirectional_ca: false      # S1: drop the reverse cross-attention kv_ca\n")
+
 def apply_a6(s):
     # Decoder depth, not encoder depth. The task heads are shared and run once per decoder layer,
     # so this also removes one of the supervised evaluations: A6's val_loss sums over three
@@ -55,6 +63,7 @@ arms = {
     "A3_dim48":  ("A3 alone",     [apply_a3]),
     "A4_enc5":   ("A4 alone",     [apply_a4]),
     "A6_dec3":   ("A6 alone",     [apply_a6]),
+    "S1_nobidir": ("S1 alone",    [apply_s1]),
     "C1_a2a3a4": ("A2 + A3 + A4", [apply_a2, apply_a3, apply_a4]),
     "C3_a2a3":   ("A2 + A3",      [apply_a2, apply_a3]),
     "C4_a3a4":   ("A3 + A4",      [apply_a3, apply_a4]),
@@ -75,6 +84,7 @@ for arm, (desc, fns) in arms.items():
 #   A3  dim 64 -> 48, the dim-derived head literals scaled by 0.75, num_heads 8 -> 6
 #   A4  encoder num_layers 6 -> 5
 #   A6  decoder num_decoder_layers 4 -> 3
+#   S1  bidirectional_ca off -- drops kv_ca from every decoder layer
 # Everything else, including the training recipe, is the reference's. Compare against the
 # reference run of this study (base_small.yaml at the same geometry), never against head runs.
 #

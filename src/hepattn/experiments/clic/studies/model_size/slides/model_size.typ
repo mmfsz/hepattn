@@ -441,6 +441,8 @@
         [777,627], [0.949×], [−6%], [−6%],
       [#bold[A6] dec3], [decoder 4 → 3 layers #h(6pt) #text(size: 21pt, fill: muted)[training]],
         [719,971], [0.878×], [−16%], [−16%],
+      [#bold[S1] nobidir], [`bidirectional_ca` off #text(size: 22pt, fill: muted)[— drops `kv_ca` from all 4 layers] #h(6pt) #text(size: 21pt, fill: muted)[training]],
+        [653,539], [0.797×], [−19%], [−20%],
       table.hline(stroke: 0.8pt),
       table.cell(colspan: 6, inset: (x: 14pt, y: 7pt))[
         #text(size: 23pt, fill: muted)[#bold[stacks of the changes above]]],
@@ -458,7 +460,7 @@
     `metadata.yaml`. The other two columns are counted from the shapes, not measured, and are
     #bold[carried over from head unchanged]: this model has the same `dim`, layer counts, heads,
     node and query counts, so every shape-derived number is identical. \
-    #bold[S1 and C2 are absent] — they were never trained on this branch. #bold[C1 trained here],
+    #bold[C2 is absent] — it was never trained on this branch. #bold[C1 trained here],
     where on head it failed twice.
   ]))
 
