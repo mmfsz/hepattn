@@ -1,4 +1,4 @@
-# clic_paper_small_C5_a2a4 -- A2 + A4, on the paper tag's small model.
+# clic_paper_small_A6_dec3 -- A6 alone, on the paper tag's small model.
 #
 # Generated from configs/base_small.yaml by studies/model_size/make_arms.py; every line that
 # differs from base_small.yaml carries an "A2:", "A3:" or "A4:" comment. The arm definitions are
@@ -10,7 +10,7 @@
 # Everything else, including the training recipe, is the reference's. Compare against the
 # reference run of this study (base_small.yaml at the same geometry), never against head runs.
 #
-name: clic_paper_small_C5_a2a4
+name: clic_paper_small_A6_dec3
 seed_everything: 42
 
 data:
@@ -138,27 +138,23 @@ model:
       encoder:
         class_path: hepattn.models.Encoder
         init_args:
-          num_layers: 5                 # A4: encoder 6 -> 5 layers
+          num_layers: 6
           dim: *dim
           attn_type: flash-varlen
           hybrid_norm: true
           value_residual: true
           num_register_tokens: 8
-          dense_kwargs:
-            hidden_dim_scale: 1           # A2: MLP hidden 2*dim -> 1*dim
           attn_kwargs:
             num_heads: 8                  # (2) 16 -> 8
 
       decoder:
-        num_decoder_layers: 4
+        num_decoder_layers: 3         # A6: decoder 4 -> 3 layers
         num_queries: *num_particles
         mask_attention: true
         use_query_masks: false
         decoder_layer_config:
           dim: *dim
           hybrid_norm: true
-          dense_kwargs:
-            hidden_dim_scale: 1           # A2: MLP hidden 2*dim -> 1*dim
           attn_kwargs:
             num_heads: 8                  # (3) 16 -> 8
 

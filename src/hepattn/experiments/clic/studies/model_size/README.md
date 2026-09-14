@@ -24,13 +24,17 @@ positive control for *this code*, not the reference for the arms.
 Definitions as on `main` (round 3, the 2³ factorial over A2/A3/A4 at fixed decoder depth), derived
 from `configs/base_small.yaml` by `make_arms.py`:
 
-| Arm | Change | Params | Fraction |
-|---|---|---:|---:|
-| reference | `configs/base_small.yaml` | 819,683 | 1.000 |
-| C5 a2a4 | A2 + A4 | 616,219 | 0.752 |
-| C4 a3a4 | A3 + A4 | 443,435 | 0.541 |
-| C3 a2a3 | A2 + A3 | 369,089 | 0.450 |
-| C1 a2a3a4 | A2 + A3 + A4 | 352,331 | 0.430 |
+| Arm | Change | Params | Fraction | Round |
+|---|---|---:|---:|---|
+| reference | `configs/base_small.yaml` | 819,683 | 1.000 | 1 |
+| A4 enc5 | A4 | 777,627 | 0.949 | 2 |
+| A6 dec3 | A6 | 719,971 | 0.878 | 2 |
+| A2 mlp1x | A2 | 645,859 | 0.788 | 2 |
+| C5 a2a4 | A2 + A4 | 616,219 | 0.752 | 1 |
+| A3 dim48 | A3 | 467,201 | 0.570 | 2 |
+| C4 a3a4 | A3 + A4 | 443,435 | 0.541 | 1 |
+| C3 a2a3 | A2 + A3 | 369,089 | 0.450 | 1 |
+| C1 a2a3a4 | A2 + A3 + A4 | 352,331 | 0.430 | 1 |
 
 - **A2** `dense_kwargs.hidden_dim_scale: 2 → 1` in every encoder and decoder block (on the paper's
   SwiGLU `Dense` this halves the gated hidden width).
@@ -38,6 +42,15 @@ from `configs/base_small.yaml` by `make_arms.py`:
   regression input 102 and hidden `[96, 96, 96, 48, 24]`; the incidence head follows `dim`),
   `num_heads 8 → 6` so `head_dim` stays 8 (flash-attn needs `head_dim % 8 == 0`).
 - **A4** encoder `num_layers 6 → 5`.
+- **A6** decoder `num_decoder_layers: 4 → 3`. Not part of the {A2, A3, A4} factorial — it varies
+  depth, which the factorial holds fixed. Its val_loss is **not comparable** to the reference's:
+  the loss sums over the intermediate decoder layers and A6 has one fewer, so a lower number is an
+  artefact of fewer terms. Only the final-layer metrics and the jet physics compare.
+
+Round 1 is the factorial's pairs and triple, trained 2026-09-11. Round 2 is the three singles plus
+A6, queued 2026-09-14: each single is exactly one change off the reference, which turns round 1's
+pair measurements into per-change main effects without assuming additivity — and round 1 already
+showed additivity fails for the triple.
 
 Parameter counts are from instantiating each resolved config (`count_params`, CPU); verify against
 the trained checkpoints' `ModelSummary` line.
@@ -296,6 +309,38 @@ The bar an arm must clear is 2·√2·σ_repro, and σ_repro is unmeasured on th
 distinguishable from zero. The main-effects fit inherits that same missing error bar, and it rests
 on four trainings with no replicates — the singles A2/A3/A4 were never trained on this branch.
 
+### The same cut costs ~4x more here than on head
+
+Head's factorial (job 41394227 on `main`) ran the same three pairs. Global jet-E IQR in
+`mpflow_proxy`, arm minus its own reference:
+
+| arm | head Δ | this branch Δ |
+|---|---:|---:|
+| C5 a2a4 | −0.0001 | +0.0031 |
+| C4 a3a4 | +0.0021 | +0.0073 |
+| C3 a2a3 | +0.0030 | +0.0118 |
+
+Not an artefact of the comparison: 32,120 matched jets on head against 32,188 here, per-bin counts
+within 2%, both host solver, both 200 epochs. And not a deeper cut — **A3 removes 43.0% of the
+parameters here and 42.78% on head**, the same shrink, for +0.0005 there (measured, single arm)
+against ~+0.0080 here (inferred from the pairs; the single is now queued to measure it).
+
+This is what makes the arms cross Pandora. The reference's margin over Pandora is widest at low
+energy (+0.009 at E10) and gone by E170 (−0.005) — particle flow's advantage *is* the low-energy
+region. A penalty of +0.010 there consumes it, so C3 and C1 fall behind Pandora below 75 GeV while
+head's arms, penalised only +0.002, never did.
+
+**Hypothesis: head's model was not capacity-limited.** Head's reference carries the rising-IQR
+pathology this branch exists to escape — its `mpflow` IQR runs 0.078 → 0.100 across energy where
+the paper's runs 0.082 → 0.078. If something other than width is the binding constraint there,
+removing width is nearly free. A supporting sign: head's measured σ_repro (proxy) is 0.0007, so its
+detection bar is 2·√2·σ = 0.0020 — head's A3 single sits *below* its own bar and C3 barely above.
+Head's whole size ablation lived at its noise floor.
+
+If that holds, the head-based study understated what shrinking costs, and its conclusions should not
+be carried into the FPGA target. The singles A2/A3/A4 queued here test it directly: they make the
+per-change comparison measurement-against-measurement instead of fit-against-measurement.
+
 ### Tier 2: the breadth check (job 42120447)
 
 Fourteen figures, seven per convention, in `figures/size_ablation_<convention>_*.png`. The
@@ -317,3 +362,23 @@ neutral-hadron classes are the ones inferred from calorimetry alone, with no tra
 So the cost of shrinking on this code is resolution, spread proportionally across classes — not a
 class collapse and not an efficiency failure. That is the opposite of head's C1, which kept a third
 of the reference's matched jets.
+
+## Round 2 register — the singles and the depth arm
+
+Submitted 2026-09-14, same geometry as round 1 (1× B200, batch 2048, `device_solver: jv`, 200
+epochs). 12 h requested, 1.3× the reference arm's measured 8 h 59; every arm here is smaller than
+the reference, so none should approach it. Each full run chained `afterok` behind its own
+pre-flight, and pre-flights carry `--name pf_<run>` so they no longer collide with the full run's
+folder.
+
+| Arm | Params | Pre-flight | Full run |
+|---|---:|---|---|
+| A2 mlp1x | 645,859 | 42122352 | 42122353 |
+| A3 dim48 | 467,201 | 42122354 | 42122355 |
+| A4 enc5 | 777,627 | 42122356 | 42122357 |
+| A6 dec3 | 719,971 | 42122358 | 42122359 |
+
+Why these four: the three singles make the per-change comparison against head
+measurement-against-measurement rather than fit-against-measurement, which is what the "4× more
+sensitive" claim above needs. A6 has never been trained on this branch at all — head trained it in
+its round 3 and it was not carried over.
