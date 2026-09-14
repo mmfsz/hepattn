@@ -530,7 +530,7 @@ was changed during the port; everything here is a behaviour change, not style.
    lines of self-contained code. The other backends are untouched: their outputs
    and state dicts are unchanged by this port.
 
-## 8. Next step: can Linformer and masked attention coexist?
+## 8. The open question: can Linformer and masked attention coexist?
 
 This is the open question the port leaves behind, and it should be answered before
 any physics conclusion is drawn from a Linformer run.
@@ -580,6 +580,48 @@ are worth the effort.
 jet-energy IQR that falls with energy, compared against the measured
 reproducibility spread — not validation loss. Anything that only moves `val_loss`
 proves nothing here.
+
+### 8.1 Why the reverse cross-attention is out of reach
+
+`bidirectional_ca` is on in this model, so each decoder layer runs cross-attention
+in **both** directions, and they are two separate `Attention` modules:
+
+```
+q_ca :  150 object queries  --look at-->  160 constituents     mask M
+kv_ca:  160 constituents    --look at-->  150 object queries    mask Mᵀ
+```
+
+Linformer coexists with `bidirectional_ca` perfectly well — step 1 leaves it on
+and simply does not use Linformer in either cross-attention. What cannot be done
+is putting Linformer **on `kv_ca`**, and it is worth being precise about why,
+because there are two independent reasons and only the first is the obvious one.
+
+**It carries a mask.** `kv_ca` gets `Mᵀ`, the same mask transposed: constituent
+*j* may attend only to the object queries that currently claim it. That is the
+whole problem of section 8 again, with the axes swapped, so it is blocked for
+exactly the reason `q_ca` is.
+
+**Its padding is on the wrong axis.** This one is specific to Linformer, and it
+survives even if the mask problem were solved. Linformer's padding story is
+asymmetric: it handles padding by **zeroing padded keys and values before the
+projection** (section 3, point 2), because the key axis is the axis it compresses.
+In `kv_ca` the roles swap — the constituents are the *queries*. Their validity
+mask therefore arrives through `q_mask`, which is the query axis, and that axis is
+neither compressed nor masked by anything Linformer has. The 150 object queries
+sitting on the key side have no padding at all, so Linformer's one masking
+mechanism is pointed at the one axis that does not need it.
+
+The result would not crash. It would produce ordinary-looking output rows for
+padded constituents, which are then largely masked out downstream — which is
+precisely the shape of reasoning that produced every bug in section 7, so the
+backend refuses a `q_mask` rather than ignoring one.
+
+**The consequence for the programme.** Linformer on *every* attention in the model
+would require `bidirectional_ca` off, which deletes `kv_ca` rather than solving
+it. That is not as drastic as it sounds: the model-size study on the paper tag has
+an arm testing exactly that (see section 11), and on head the same ablation was
+not catastrophic. So "compress everything" is not off the table — it just runs
+through a different decision than the mask projection does.
 
 ## 9. Where things are
 
@@ -656,6 +698,60 @@ Nothing under `logs/` before this: Three arms are planned: step 0, the baseline 
 attributable; step 1, Linformer everywhere there is no mask (the encoder, and the
 decoder's query self-attention); and step 2, the projected-mask attempt of
 section 8.
+
+## 11. Next steps, as decided
+
+**Waiting on the four jobs in section 10.** Nothing below is worth starting before
+the reference and step 0 report, because step 0 decides whether half of it is
+needed at all.
+
+1. **Report step 1's pre-flight projection.** Job 42149947 gives
+   `project_runtime.py` a step rate, which replaces the guessed 18 h on the run
+   chained behind it with a projection. Whether to change the queued limit is not
+   the pre-flight's decision to make.
+2. **Write the plotting and chain it.** The existing plotting is arm-set driven
+   (`studies/model_size/arm_sets.py`, `ARM_SET`) and plots against parameter
+   count, which is not this study's axis. The linformer version needs its own arm
+   set and a jet-energy-IQR comparison across the three arms, submitted with
+   `--dependency=afterok` on the three evaluation jobs. Written and tested against
+   the first evaluation's output rather than shipped blind.
+3. **Judge step 0 on jet-energy IQR, not `val_loss`.** If the reference barely
+   moves with masked attention off, step 2 is unnecessary: keep the mask off,
+   study compression on its own, and the programme reduces to step 1 plus a scan
+   of `k`. If it degrades against the measured reproducibility spread, step 2 is
+   the blocker and gets built.
+4. **Scan `k`.** Fixed at 64 for now, which is the ported value and costs +25% of
+   the model's parameters (section 10). `k = 32` halves that for more compression
+   and more risk. One extra arm, and the point of the exercise: the whole trade is
+   parameters against multiplies.
+5. **Step 2, only if 3 says so.** Decided in advance so the decision is not made
+   under pressure later: the mask projects through `|E|`, the same matrix that
+   compresses the keys, normalised by the same projection of the validity mask;
+   applied as an additive `log(w + ε)` on the scores, which is the form the hard
+   mask already uses and reduces to it exactly in the limit; on `q_ca` only, with
+   `kv_ca` left as ordinary masked attention for the reasons in 8.1. Before any
+   training, measure `Var_m(w_im)` on a batch from a trained step-1 checkpoint: if
+   `w` is near-constant across virtual tokens it cancels in the softmax, the
+   projected mask does nothing, and the honest next move is avenue 3 of section 8
+   — data-dependent landmarks — rather than a run that looks like a null result.
+
+### A concurrent run that informs this
+
+The model-size study has `S1_nobidir` in the queue at the same time (pre-flight
+42149891, run 42149892): the paper-tag small model with `bidirectional_ca` off.
+It belongs to that study and answers its own question, but it reads directly on
+8.1. Turning `bidirectional_ca` off deletes `kv_ca`, the one attention in the
+model that Linformer can neither mask nor pad correctly. If that arm is close to
+its reference, then "Linformer everywhere" becomes reachable by removing the
+reverse cross-attention rather than by projecting a mask through it, and it is
+reachable without step 2 existing at all.
+
+Two arms therefore bear on the same question from opposite sides — step 0 asks
+what masked attention is worth, `S1_nobidir` asks what the reverse direction is
+worth — and between them they decide how much of section 8 needs building. The
+same-day head result that `bidirectional_ca` off was not catastrophic is a reason
+to expect the answer, not a substitute for it: head is a different model, and the
+topocluster phi fix means its inputs were different too.
 
 Reference: Wang et al., *Linformer: Self-Attention with Linear Complexity*,
 [arXiv:2006.04768](https://arxiv.org/abs/2006.04768).
