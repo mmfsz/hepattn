@@ -73,7 +73,7 @@ For the physics, evaluate with `submit_eval_l4.sh` and read the proxy jet-E IQR 
 |---|---|---|---|---|---|
 | PF-ctl | 41992197 | ✅ 5 m 46 | **819,683** | **360** | 150→300: 367 |
 | PF-silu | 41992198 | ✅ 6 m 17 | **703,203** | **380** | 150→300: 380 |
-| Full | 41992199 | queued on `afterok:41992198` | 703,203 | | physics arm |
+| Full | 41992199 | ✅ **8 h 42** (200/200 ep) | 703,203 | **300** (steady state, 146-148 s/epoch) | best val_loss **4.5297** (ep 198); folder `logs/clic_paper_small_silu_20260913-T175916`; eval pending |
 
 ### Question 1 (timing): the answer is no
 
@@ -98,5 +98,18 @@ data-dependent solve time on the *trained* model's cost matrices (84 vs 47 ms/st
 300-step pre-flight can see -- fresh models of both codes step at 360 ms. Whether the activation
 changes the trained cost matrices is what 41992199's epoch-time curve will show.
 
-Question 2, the physics, is unaffected: 41992199 is still the first clean single-variable test of
-the SwiGLU suspect from `main`'s `glow_jet_iqr` bisect, and it is now the *only* reason to run it.
+### Full run (finished 2026-09-14 02:41)
+
+**Timing.** 8 h 42 against the SwiGLU reference's 8 h 59; steady-state epochs 146-148 s
+(300 ms/step) against 150-152 s (311) for SwiGLU and 126-131 s (261) for head. The 3% is real
+but small: removing the gated feed-forwards buys a tenth of the paper-vs-head gap. The epoch-time
+curve falls over the first 40 epochs like every other run (284 s at epoch 0, 162 at epoch 5, 149
+at epoch 30), which is the matcher-kernel signature `studies/step_time_gap/` identified, and it
+settles near the SwiGLU run's level, not head's. **The activation is not what makes head's cost
+matrices easier to solve either.**
+
+**val_loss.** 4.5297 at epoch 198 (last checkpoint is the best, no overfitting), i.e. **0.12
+worse than the SwiGLU run's 4.4089** on identical data, geometry and code. That is outside head's
+same-config scatter of 0.01-0.03. Whether it moves the proxy jet-E IQR is the physics question this
+run exists for; evaluate with `submit_eval_l4.sh` and read it as `studies/paper_tag_baseline/`
+does.

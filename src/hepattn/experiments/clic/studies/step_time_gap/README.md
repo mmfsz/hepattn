@@ -217,9 +217,11 @@ harder to solve than head's. The cost definitions and weights are identical on b
 (`object_ce` 2.0, `mask_dice` 1.0, `kl_div` 1.0; both compute costs the same way in `loss.py`),
 so the difference is in the trained outputs themselves: which of the post-paper model changes
 (SwiGLU -> SiLU, the incidence/mask-head width, the norm rewrite) moves the solver's difficulty
-is not established. `studies/swiglu_silu/`'s full SiLU run (41992199) is the first data point:
-its epoch times so far (epoch 12: 155 s, against 161 s for the SwiGLU run and 145 s for head at
-the same epoch) will show whether the activation alone accounts for it.
+is not established. `studies/swiglu_silu/`'s full SiLU run (41992199, finished 2026-09-14) is the first data
+point and it rules the activation out: its steady-state epochs are 146-148 s (300 ms/step),
+against 150-152 s for SwiGLU and 126-131 s for head. Removing the gated feed-forwards is worth
+3%, a tenth of the gap; the remaining suspects are the incidence/mask-head width and the
+norm/decoder rewrite.
 
 ### What this means
 
