@@ -1,0 +1,9 @@
+# The repo root ignores *.png and *.pdf globally (.gitignore:91-92), which would
+# silently drop the FSU lockups the title slide and footer bar load -- a checkout
+# would then fail to compile. A negation in a deeper .gitignore takes precedence.
+# Same trap the parent study's .gitignore documents for figures/.
+!logos/
+!logos/*.png
+
+# The built deck is a regenerable artefact: `typst compile --root .. model_size.typ`.
+model_size.pdf

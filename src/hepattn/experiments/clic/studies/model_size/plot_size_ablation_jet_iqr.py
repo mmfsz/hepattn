@@ -223,6 +223,41 @@ outpath = FIG / f"{PREFIX}_jet_iqr.png"
 fig.savefig(outpath, dpi=140)
 print(f"\nSaved: {outpath}")
 
+# ---------------------------------------------------------------------------------------------
+# SLIDE FIGURES: one per convention, median and IQR SIDE BY SIDE, no ratio panel.
+#
+# The 2x2 canvas above is the working figure -- both conventions at once, for reading the study.
+# These are for the deck, and they exist because the performance helper's `plot_jet_response`
+# stacks THREE panels vertically on this branch (median, IQR, and IQR/median) where head's put two
+# side by side. Rather than restyle a helper that `performance.ipynb` shares, the numbers are
+# already computed here, so the figure is drawn here: same curves, same bootstrap errors, same
+# Pandora backdrop, laid out the way the deck wants them.
+for br in BRANCHES:
+    f2, (m_ax, i_ax) = plt.subplots(1, 2, figsize=(13, 3.4), constrained_layout=True)
+    if PANDORA in RES:
+        pmed, piqr, _pg, _pm = curve(PANDORA)
+        pbiqr, _a, _b = bootstrap(PANDORA)
+        m_ax.plot(mids, pmed, label="Pandora", **PANDORA_STYLE)
+        i_ax.errorbar(mids, piqr, yerr=pbiqr.std(axis=0), label="Pandora", capsize=2, **PANDORA_STYLE)
+    for disp, _root, _p in ARMS:
+        nm = f"{disp} [{br}]"
+        if nm not in RES:
+            continue
+        med, iqr = results[nm]
+        st = {"color": COLORS[disp], "lw": LINEWIDTHS[disp], "markersize": 4}
+        m_ax.plot(mids, med, MARKERS[disp] + "-", label=disp, **st)
+        i_ax.errorbar(mids, iqr, yerr=boots[nm].std(axis=0), fmt=MARKERS[disp] + "-", label=disp, capsize=2, **st)
+    m_ax.axhline(0, ls="--", color="k", alpha=0.4)
+    m_ax.set(xlabel="Jet $E^{truth}$ [GeV]", ylabel="Jet median$((E^{reco}-E^{truth})/E^{truth})$")
+    i_ax.set(xlabel="Jet $E^{truth}$ [GeV]", ylabel="Jet IQR$((E^{reco}-E^{truth})/E^{truth})$")
+    for a in (m_ax, i_ax):
+        a.legend(fontsize=8, ncol=2)
+        a.grid(alpha=0.3)
+    out2 = FIG / f"{PREFIX}_{br}_jet_median_iqr.png"
+    f2.savefig(out2, dpi=150)
+    plt.close(f2)
+    print(f"Saved: {out2}")
+
 print("\nglobal jet-E median response (+- bootstrap sigma_stat) — energy SCALE, a different failure mode from resolution:")
 for name, (g, e) in medians.items():
     print(f"  {name:<34} {g:+.4f} +- {e:.4f}")
