@@ -17,7 +17,6 @@
 //    slide 9  the plots    REPLACED -- median and IQR side by side, no ratio panel, from
 //                          `plot_size_ablation_jet_iqr.py`. The performance helper's
 //                          `plot_jet_response` stacks three panels vertically on this branch.
-//    slide 10 resolution   NEW -- the jet-E IQR table, Pandora included.
 //    slide 12 sigma_repro  REWRITTEN -- head measured it, this branch has not, and head's number
 //                          does not transfer.
 //
@@ -488,60 +487,8 @@
 ]
 
 
-#cslide("Jet energy resolution — what the shrink costs")[
-  #flow(80pt, 176pt, 1760pt, gap: 0.5cm)[
-    Global jet-E IQR against the reference. #bold[The ordering is monotone in parameter count and
-    both conventions agree on every arm.] C1 does not blow the range — it is the worst arm by a
-    graded margin, not a failure.
-  ]
-
-  #at(80pt, 268pt, box(width: 1060pt)[
-    #set text(size: 25pt)
-    #table(
-      columns: (1fr, auto, auto, auto, auto),
-      stroke: none,
-      align: (left, right, right, right, right),
-      inset: (x: 14pt, y: 9pt),
-      [#bold[arm]], [#bold[vs ref]], [#bold[IQR `mpflow`]], [#bold[Δ]], [#bold[Δ `proxy`]],
-      table.hline(stroke: 0.8pt),
-      [reference 820k], [1.000×], [0.0827], [—], [—],
-      [C5 a2a4], [0.752×], [0.0840], [+0.0012], [+0.0031],
-      [C4 a3a4], [0.541×], [0.0926], [+0.0098], [+0.0073],
-      [C3 a2a3], [0.450×], [0.0980], [+0.0153], [+0.0118],
-      [C1 a2a3a4], [0.430×], [0.1006], [+0.0179], [+0.0137],
-      table.hline(stroke: 0.4pt + luma(200)),
-      [#text(fill: muted)[Pandora] #text(size: 21pt, fill: muted)[— classical, not an arm]],
-        [#text(fill: muted)[—]], [#text(fill: muted)[0.0628]],
-        [#text(fill: muted)[−0.0199]], [#text(fill: muted)[+0.0027]],
-    )
-  ])
-
-  #at(1170pt, 268pt, callout(670pt, size: 24pt)[
-    #bold[A3 is what costs.] Solving the three pairs for per-change contributions to ΔIQR
-    (`mpflow`): #bold[A3 +0.0120], A2 +0.0034, A4 #bold[−0.0022] — free. \
-    #bold[C5 is the cheap shrink]: a quarter of the parameters for +0.0012. \
-    The triple is #bold[super-additive]: +0.0132 predicted, +0.0179 measured.
-  ])
-
-  #at(1170pt, 620pt, callout(670pt, size: 23pt, fill: rgb("#fdf3f3"))[
-    #text(fill: warn, weight: "bold")[Orderings, not verdicts.] σ#sub[stat] here is ≈ 0.0007 and is
-    the test-sample term only. The bar an arm must clear is 2√2 σ#sub[repro], and σ#sub[repro] has
-    #bold[not been measured on this code].
-  ])
-
-  #at(80pt, 790pt, box(width: 1760pt, text(size: 22pt, fill: muted)[
-    Pandora has no convention of its own, so the same 0.0628 appears in both columns and the
-    comparison flips: it beats every arm in `mpflow` and loses to the reference in `mpflow_proxy`.
-    That gap is wider than the whole ablation — which is why the paper comparison is read in
-    `mpflow_proxy` only.
-  ]))
-]
-
-
 #closing("Backup")
 
-
-// The seed floor, finally measured -- the missing denominator under every Part 3 verdict.
 
 #cslide("Backup — the resolution floor is NOT measured here")[
   #flow(80pt, 190pt, 1760pt, gap: 0.7cm)[
