@@ -73,7 +73,7 @@ For the physics, evaluate with `submit_eval_l4.sh` and read the proxy jet-E IQR 
 |---|---|---|---|---|---|
 | PF-ctl | 41992197 | ✅ 5 m 46 | **819,683** | **360** | 150→300: 367 |
 | PF-silu | 41992198 | ✅ 6 m 17 | **703,203** | **380** | 150→300: 380 |
-| Full | 41992199 | ✅ **8 h 42** (200/200 ep) | 703,203 | **300** (steady state, 146-148 s/epoch) | best val_loss **4.5297** (ep 198); folder `logs/clic_paper_small_silu_20260913-T175916`; eval pending |
+| Full | 41992199 | ✅ **8 h 42** (200/200 ep) | 703,203 | **300** (steady state, 146-148 s/epoch) | best val_loss **4.5297** (ep 198); folder `logs/clic_paper_small_silu_20260913-T175916`; eval **42118999** ✅ |
 
 ### Question 1 (timing): the answer is no
 
@@ -111,5 +111,42 @@ matrices easier to solve either.**
 **val_loss.** 4.5297 at epoch 198 (last checkpoint is the best, no overfitting), i.e. **0.12
 worse than the SwiGLU run's 4.4089** on identical data, geometry and code. That is outside head's
 same-config scatter of 0.01-0.03. Whether it moves the proxy jet-E IQR is the physics question this
-run exists for; evaluate with `submit_eval_l4.sh` and read it as `studies/paper_tag_baseline/`
-does.
+run exists for; evaluated below.
+
+### Physics (evaluation 42118999, 2026-09-14)
+
+Proxy jet-E IQR per 20 GeV bin of truth jet energy, `mpflow_proxy`, `ind_threshold` 0.65,
+`dr_cut` 0.1, two leading jets, `pt_min` 10 -- the same reading as `studies/paper_tag_baseline/`,
+whose two reference rows reproduce exactly (positive control):
+
+| E [GeV] | 0-20 | 20-40 | 40-60 | 60-80 | 80-100 | 100-120 | 120-140 | 140-160 | 160-180 | 180-200 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| paper tag 39236741 (3x L4, scipy) | 0.0784 | 0.0648 | 0.0608 | 0.0603 | 0.0583 | 0.0605 | 0.0576 | 0.0590 | 0.0585 | 0.0499 |
+| SwiGLU reference 41758027 (B200, JV) | 0.0821 | 0.0683 | 0.0609 | 0.0595 | 0.0571 | 0.0621 | 0.0568 | 0.0562 | 0.0610 | 0.0528 |
+| **SiLU 41992199** (B200, JV) | 0.0877 | 0.0692 | 0.0644 | 0.0622 | 0.0592 | 0.0648 | 0.0581 | 0.0621 | 0.0632 | 0.0550 |
+| Pandora | 0.0911 | 0.0758 | 0.0682 | 0.0641 | 0.0609 | 0.0625 | 0.0594 | 0.0603 | 0.0563 | 0.0538 |
+
+Two readings:
+
+1. **The shape survives.** The SiLU model's IQR *falls* with jet energy, 0.088 -> 0.055, like the
+   paper's and unlike head's rising curve. SwiGLU -> SiLU alone does not produce head's
+   jet-E IQR pathology, so it is not the bisect's culprit on its own (the remaining single
+   suspects are the incidence-head width and the norm/decoder rewrite; a combination is not
+   excluded).
+2. **The resolution degrades.** SiLU is worse than the SwiGLU reference in every bin, by
+   0.001-0.006 (0.0035 on average), and above 140 GeV it is worse than Pandora (0.0621 and
+   0.0632 against Pandora's 0.0603 and 0.0563) where the SwiGLU model still matched it. The jet
+   response median is unchanged. This is consistent with the 0.12 worse val_loss and is the
+   expected price of removing 116 K parameters from the feed-forwards; whether it clears the
+   training-to-training scatter is unknown, since sigma_repro has not been measured on this
+   code (head's proxy figure was 0.0007, which the per-bin gap exceeds in every bin).
+
+The paper's gated feed-forwards therefore earn their parameters: they buy 3% of step time and
+~0.0035 of jet-E IQR. Nothing here argues for switching this line to SiLU.
+
+Figures in `figures/` (same six as the baseline study), written by
+`performance_swiglu_silu.ipynb` -- the paper clone's `performance.ipynb` with this study's
+networks, labels and `plot_path`, run headless with `jupyter nbconvert --execute` in the `clic`
+environment from the clone's `notebooks/` directory (its `pandora` entry and RNTuple reading
+come from the shared performance package). `jet_response.png` is the plot the two readings above
+come from.
