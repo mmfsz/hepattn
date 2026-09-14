@@ -1,0 +1,35 @@
+# Evaluation overlay for the Linformer arms. Pass AFTER the run's config, e.g.
+#   python main.py test --config logs/<run>/config.yaml \
+#       --config studies/linformer/configs/eval_linformer.yaml --ckpt_path <ckpt>
+#
+# configs/eval.yaml with its `encoder: attn_type: torch` override removed, and nothing else
+# changed. That override exists to make evaluation independent of the flash kernels, and it works
+# by rebuilding the encoder with torch attention before the checkpoint is loaded. A Linformer
+# encoder has different parameters -- its own to_q/to_k/to_v/to_out and the two compression
+# matrices, and no in_proj_weight -- so rebuilding it as a torch encoder gives the checkpoint
+# nothing to load into. Linformer is a plain torch implementation with no kernel to swap away
+# from, so there is nothing the override would buy here in any case.
+#
+# Use this for any arm with attn_type: linformer anywhere in it; the arms that do not use
+# Linformer (phi_ref, no_mask_attn) evaluate with configs/eval.yaml as usual.
+trainer:
+  precision: 32-true
+  callbacks:
+    - class_path: hepattn.callbacks.InferenceTimer
+    - class_path: hepattn.experiments.clic.PflowPredictionWriter
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+      init_args:
+        refresh_rate: 50
+model:
+  model:
+    init_args:
+      matcher:
+        init_args:
+          # Matching never runs at test time, so evaluation must not depend on the
+          # out-of-environment GPU solver build: a run trained with `device_solver: jv`
+          # is otherwise unevaluable on a node whose architecture it was not built for.
+          device_solver: null
+data:
+  is_inference: true
+  num_workers: 4
+matmul_precision: highest
