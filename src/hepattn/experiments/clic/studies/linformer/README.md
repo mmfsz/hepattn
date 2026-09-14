@@ -629,8 +629,29 @@ inputs, which means **the existing paper-tag reproductions are not a valid
 baseline for these arms** — they were trained on topoclusters whose azimuth was
 phi in all three channels.
 
-No training run exists yet: nothing under `logs/`, and no submit script refers to
-any of these configs. Three arms are planned: step 0, the baseline with
+### Submitted 2026-09-14
+
+| arm | training | eval | `--time` |
+| --- | --- | --- | --- |
+| `clic_paper_small_phi_ref` | 42149945 | 42149950 | 12 h |
+| `clic_paper_small_no_mask_attn` | 42149946 | 42149951 | 12 h |
+| `clic_paper_small_linformer_unmasked` | 42149948, behind pre-flight 42149947 | 42149952 | 18 h |
+
+All on one B200, batch 2048, `device_solver: jv`, 200 epochs, via
+`submit_training_b200.sh`. Each evaluation is chained on `afterok` of its
+training and resolves the run directory and last checkpoint itself; step 1's uses
+`studies/linformer/configs/eval_linformer.yaml`.
+
+The reference and step 0 are the measured geometry: 8 h 59 (job 41758027,
+311 ms/step), requested 12 h. Step 1 has **no measurement** -- it replaces a fused
+flash kernel with unfused einsums in six encoder layers and four decoder query
+self-attentions -- so 18 h is a guess, 1.3x an assumed 1.55x step time, and the
+300-step pre-flight in front of it is what will replace the guess with a
+projection from `project_runtime.py`.
+
+Plotting is not chained yet.
+
+Nothing under `logs/` before this: Three arms are planned: step 0, the baseline with
 `mask_attention: false` and ordinary attention, which makes the rest
 attributable; step 1, Linformer everywhere there is no mask (the encoder, and the
 decoder's query self-attention); and step 2, the projected-mask attempt of
