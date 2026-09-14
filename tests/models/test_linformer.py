@@ -105,3 +105,10 @@ def test_linformer_value_residual_needs_self_attention():
     attn = Attention(dim=16, num_heads=2, attn_type="linformer", linformer_seq_len=8, linformer_proj_dim=4, value_residual=True, is_first_layer=False)
     with pytest.raises(AssertionError, match="self-attention"):
         attn(torch.randn(2, 8, 16), torch.randn(2, 6, 16), initial_values={"v": torch.randn(2, 2, 6, 8)})
+
+
+def test_linformer_refuses_query_masks():
+    """A query mask reaches the other backends through merge_masks, which this path never calls."""
+    attn = Attention(dim=16, num_heads=2, attn_type="linformer", linformer_seq_len=8, linformer_proj_dim=4)
+    with pytest.raises(AssertionError, match="query masking"):
+        attn(torch.randn(2, 8, 16), q_mask=torch.ones(2, 8, dtype=torch.bool))

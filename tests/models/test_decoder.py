@@ -226,3 +226,36 @@ class TestMaskFormerDecoderLayer:
 
         # We'd need to check that the mask was modified correctly
         # In real testing, you might want to verify this, but we'll skip for simplicity
+
+
+def test_decoder_layer_configures_self_attention_separately():
+    """The query self-attention carries no mask, so it can use a backend the cross-attentions cannot.
+
+    This is what lets Linformer sit on q_sa while q_ca and kv_ca keep their masked attention.
+    """
+    layer = MaskFormerDecoderLayer(
+        dim=16,
+        depth=1,
+        attn_kwargs={"num_heads": 2, "attn_type": "torch"},
+        sa_attn_kwargs={"attn_type": "linformer", "linformer_seq_len": 8, "linformer_proj_dim": 4},
+        mask_attention=True,
+    )
+
+    assert layer.q_ca.fn.attn_type == "torch"
+    assert layer.kv_ca.fn.attn_type == "torch"
+    assert layer.q_sa.fn.attn_type == "linformer"
+
+    # keys not overridden still come from attn_kwargs
+    assert layer.q_sa.fn.num_heads == 2
+
+    q = torch.randn(2, 8, 16)
+    kv = torch.randn(2, 10, 16)
+    attn_mask = torch.ones(2, 8, 10, dtype=torch.bool)
+    q_out, kv_out = layer(q, kv, attn_mask=attn_mask)
+    assert q_out.shape == q.shape
+    assert kv_out.shape == kv.shape
+
+
+def test_decoder_layer_self_attention_defaults_to_attn_kwargs():
+    layer = MaskFormerDecoderLayer(dim=16, attn_kwargs={"num_heads": 2, "attn_type": "torch"})
+    assert layer.q_sa.fn.attn_type == layer.q_ca.fn.attn_type == "torch"

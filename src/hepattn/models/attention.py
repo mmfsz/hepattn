@@ -378,6 +378,8 @@ class Attention(nn.Module):
 
         # Linformer does its own projections and returns the output directly
         if self.attn_type == "linformer":
+            # q_mask reaches the other backends through merge_masks, which this path does not use
+            assert q_mask is None, "The linformer backend does not support query masking"
             return self.attn(q, kv, kv_mask=kv_mask, initial_values=initial_values)
 
         # Prepare queries, keys, and values
