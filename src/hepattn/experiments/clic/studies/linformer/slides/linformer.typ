@@ -38,6 +38,144 @@
 )
 
 
+// ==================== 0. HOW IT WORKS ====================
+//
+//  Three pedagogical slides before the costing. One worked example runs through all three:
+//  6 constituents, 3 summaries, 4 queries. The numbers are chosen so that the last slide shows
+//  both the mechanism AND its failure mode -- queries q1..q3 claim constituents that line up with
+//  the summaries and keep a sharp mask; q4's claims are spread across all three, so its projected
+//  mask comes out nearly flat and cancels in the softmax. That is the Var(w) check of README 11.5,
+//  made visible rather than asserted.
+
+#let yes = box(width: 25pt, height: 25pt, fill: good, radius: 3pt)
+#let no = text(size: 26pt, fill: luma(185))[·]
+
+#let mat(colhdr, rowhdr, rows, cellw: 66pt, cellh: 50pt, size: 25pt, hdrw: 58pt) = {
+  let cells = ([],)
+  for h in colhdr { cells.push(text(size: size, fill: muted)[#h]) }
+  for i in range(rows.len()) {
+    cells.push(text(size: size, fill: muted)[#rowhdr.at(i)])
+    for c in rows.at(i) { cells.push(c) }
+  }
+  table(
+    columns: (hdrw,) + (cellw,) * colhdr.len(),
+    rows: (cellh,) * (rows.len() + 1),
+    stroke: 0.6pt + luma(205),
+    align: center + horizon,
+    inset: 3pt,
+    ..cells,
+  )
+}
+
+#let n(v, fill: black, w: "regular") = text(size: 24pt, fill: fill, weight: w)[#v]
+
+#let CONST = ([c1], [c2], [c3], [c4], [c5], [c6])
+#let QUERY = ([q1], [q2], [q3], [q4])
+#let SUMM = ([A], [B], [C])
+
+// the mask: which constituents each query currently claims
+#let MASK = (
+  (yes, yes, no, no, no, no),
+  (no, no, yes, yes, no, no),
+  (no, no, no, no, yes, yes),
+  (yes, no, no, yes, no, yes),
+)
+
+
+#cslide("Masked attention: the mask names constituents")[
+  #flow(90pt, 180pt, 1740pt, gap: 0.7cm)[
+    Each object query attends only to the constituents it currently claims. The mask is one
+    yes/no per #bold[(query, constituent)] pair, rebuilt at every decoder layer.
+  ]
+
+  #at(110pt, 330pt, mat(CONST, QUERY, MASK))
+  #at(110pt, 300pt, text(size: 23pt, fill: muted)[$M$ — 4 queries × 6 constituents])
+
+  #at(700pt, 330pt, box(width: 1130pt)[
+    #set text(size: 27pt)
+    #set list(spacing: 0.75cm)
+    - Scores $Q K^T$ have the #bold[same shape] as $M$: one number per (query, constituent).
+    - A masked entry is set to $-infinity$ before the softmax, so its weight is exactly 0.
+    - #text(fill: accent)[Column 4 is constituent 4.] To exclude it, you zero that column.
+  ])
+
+  #at(110pt, 625pt, box(width: 1740pt, fill: panel-fill, inset: 22pt)[
+    #text(size: 28pt)[#bold[The property that matters:] every column of the scores #emph[is] one
+    constituent, so "query 2 may not see constituent 5" has somewhere to point.]
+  ])
+]
+
+
+#cslide("Linformer: the constituents stop existing")[
+  #flow(90pt, 180pt, 1740pt, gap: 0.7cm)[
+    Linformer replaces the 6 constituents by #bold[3 learned summaries]. Summary $A$ is a fixed
+    weighted blend of #emph[all] of them: $K'_A = 0.8 K_1 + 0.7 K_2 + 0.1 K_3 + ...$
+  ]
+
+  #at(110pt, 340pt, mat(SUMM, CONST, (
+    (n[0.8], n[0.1], n[0.1]),
+    (n[0.7], n[0.2], n[0.1]),
+    (n[0.1], n[0.8], n[0.1]),
+    (n(fill: warn)[0.2], n(fill: warn)[0.7], n(fill: warn)[0.1]),
+    (n[0.1], n[0.1], n[0.8]),
+    (n[0.1], n[0.2], n[0.7]),
+  ), cellw: 78pt))
+  #at(110pt, 310pt, text(size: 23pt, fill: muted)[$E$ — 6 constituents × 3 summaries])
+
+  #at(590pt, 340pt, box(width: 1240pt)[
+    #set text(size: 27pt)
+    #set list(spacing: 0.7cm)
+    - Scores are now 4 × #bold[3]: each query attends to 3 summaries, not 6 constituents.
+      That is the saving.
+    - #text(fill: warn)[But which column is constituent 4?] It is 0.2 of $A$, 0.7 of $B$ and
+      0.1 of $C$ — a bit of every column, and no column of its own.
+    - The weights depend on the #bold[slot], not on what is in it. The blend is the same in
+      every event.
+  ])
+
+  #at(110pt, 745pt, box(width: 1740pt, fill: panel-fill, inset: 22pt)[
+    #text(size: 28pt)[#bold[Why the mask cannot come along:] it says "not constituent 4", and
+    after the projection there is no constituent 4 left to exclude. Zeroing a column of $M$ now
+    removes part of everything.]
+  ])
+]
+
+
+#cslide("Step 2: project the mask the same way")[
+  #flow(90pt, 178pt, 1740pt, gap: 0.65cm)[
+    If the keys are blended by $E$, blend the mask by $E$ too: $w = (M |E|) / ("valid" |E|)$ —
+    #bold[the fraction of each summary a query is allowed to see.] Add $log w$ to the scores: 1
+    changes nothing, 0 is the hard mask.
+  ]
+
+  #at(110pt, 360pt, mat(SUMM, QUERY, (
+    (n(w: "bold")[0.75], n[0.14], n[0.11]),
+    (n[0.15], n(w: "bold")[0.71], n[0.11]),
+    (n[0.10], n[0.14], n(w: "bold")[0.79]),
+    (n(fill: warn)[0.55], n(fill: warn)[0.48], n(fill: warn)[0.47]),
+  ), cellw: 92pt))
+  #at(110pt, 330pt, text(size: 23pt, fill: muted)[$w$ — 4 queries × 3 summaries])
+
+  #at(640pt, 360pt, box(width: 1190pt)[
+    #set text(size: 27pt)
+    #set list(spacing: 0.7cm)
+    - #text(fill: good)[q1 claims c1, c2 — which are mostly summary $A$.] It keeps a sharp mask:
+      0.75 against 0.14 and 0.11.
+    - #text(fill: warn)[q4 claims c1, c4, c6 — one from each summary.] Its row comes out nearly
+      flat: 0.55, 0.48, 0.47.
+  ])
+
+  #at(110pt, 620pt, box(width: 1740pt, fill: panel-fill, inset: 22pt)[
+    #set text(size: 27pt)
+    #bold[The risk, and the test.] A row that is flat across summaries adds the #emph[same]
+    number to every score, and a constant shift #bold[cancels in the softmax] — so for q4 the
+    mask does nothing at all. #linebreak()
+    Before spending a training run, measure how much $w$ varies across summaries. If it is flat
+    everywhere, step 2 is an expensive no-op and the answer is data-dependent summaries instead.
+  ])
+]
+
+
 // ==================== 1. THE COST MODEL ====================
 
 #cslide("The cost model: which multiplies need a DSP")[

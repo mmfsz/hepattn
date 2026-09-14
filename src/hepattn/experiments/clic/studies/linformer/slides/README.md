@@ -1,6 +1,7 @@
 # Slides
 
-Typst deck for the Linformer study. Three slides, all on the **820 k paper-tag model**
+Typst deck for the Linformer study. Six slides: three on how it works, three on what it costs,
+the costing ones on the **820 k paper-tag model**
 (`base_small`, `dim = 64`) so the numbers line up with the model-size deck's slide 7.
 
 | file | what it is |
@@ -18,12 +19,25 @@ typst watch   --root .. linformer.typ      # live preview while editing
 
 ## The slides
 
-1. **The cost model** — which multiplications need a DSP, in symbols. `data × data` is both
+The first three are pedagogical and carry one worked example all the way through: 6 constituents,
+3 summaries, 4 queries. The numbers are chosen so the third slide shows the mechanism *and* its
+failure mode in the same table — q1..q3 claim constituents that line up with the summaries and keep
+a sharp mask, while q4's claims are spread across all three, so its row comes out nearly flat and
+cancels in the softmax. That is the `Var(w)` check of the study README 11.5, made visible.
+
+1. **Masked attention** — the mask is one yes/no per (query, constituent); every column of the
+   scores *is* a constituent, so "not constituent 5" has somewhere to point.
+2. **Linformer** — the 6 constituents become 3 learned summaries, each a blend of all of them. No
+   column is constituent 4 any more, which is why the mask cannot come along.
+3. **Step 2** — blend the mask by the same matrix, `w = M|E| / (valid |E|)`, and add `log w` to the
+   scores. Sharp for q1..q3, flat for q4.
+
+4. **The cost model** — which multiplications need a DSP, in symbols. `data × data` is both
    operands from the event; `data × weight` is one operand a trained constant and is counted
    separately. Linformer's `K' = Eᵀ K` is data × weight, so it **moves** work out of the DSP budget.
    Every compressed site costs `k / n_kv` of what it did, independent of `D`.
-2. **k = 64** — the value `configs/linformer.yaml` uses.
-3. **k = 32** — the same table, one scan point down.
+5. **k = 64** — the value `configs/linformer.yaml` uses.
+6. **k = 32** — the same table, one scan point down.
 
 Columns are the study README's own steps, so the two documents agree on what each name means:
 
@@ -54,7 +68,7 @@ number that actually rules it out: 786 M of data × weight at `k = 64`, **6.3×*
 
 ## Where the numbers come from
 
-Every figure on slides 2 and 3 is [`../mac_budget.py`](../mac_budget.py) — run it rather than
+Every figure on slides 5 and 6 is [`../mac_budget.py`](../mac_budget.py) — run it rather than
 re-deriving. Step 0 reproduces the model-size deck's 65.5 M, which is the check that this deck uses
 that convention and not a parallel one. The bucket rule is section 5.1 of the study README,
 including the trap that reverses the sign of the answer if `Eᵀ K` is counted as data × data.
