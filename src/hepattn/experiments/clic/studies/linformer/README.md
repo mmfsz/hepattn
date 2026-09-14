@@ -631,11 +631,19 @@ to apply the mask while the real tokens still exist, ahead of the projection.
 That is the right fix for padding and the wrong one for masked attention,
 because the mask depends on the query. It means building `K'_i = Eᵀ diag(M_i) K`
 separately for each query — `n_q` summary sets per layer instead of one, so the
-work is `n_q n k d` against plain masked attention's `n_q n d`. That is a factor
-`k` (64 here) *more* expensive than the attention it was supposed to replace, so
-it is not a cheaper model, it is a slower one with extra parameters. The "Why
-the mask is the hard one" subsection in section 3 works this through. Treat it
-as ruled out, not untried.
+projection work goes from `n k d` to `n_q n k d`: 786 M per event here, against
+5.2 M for the shared projection.
+
+Which budget that lands in matters, and 5.1's rule applies here too. `E` is
+learned, so the per-query projection is data × weight, and the **data × data cost
+is unchanged**: each query still attends to `k` summaries, so the scores are
+`2 n_q k d`, exactly avenue 2's. On the DSP metric step 3 and avenue 2 are the
+same number. What rules step 3 out is everything else — 150× the projection work,
+a `(n_q, k, d)` activation per layer where avenue 2 holds `(k, d)`, and the
+latency and memory that go with them — bought for an approximation no better than
+avenue 2's. The "Why the mask is the hard one" subsection in section 3 works the
+arithmetic through but counts every MAC equally; read it with 5.1's bucket rule
+in hand. Treat step 3 as ruled out, not untried.
 
 **Avenues, cheapest first.**
 
