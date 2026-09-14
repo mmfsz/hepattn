@@ -52,3 +52,18 @@ def test_linformer_sequence_too_long():
     attn = Attention(dim=32, num_heads=4, attn_type="linformer", linformer_seq_len=8, linformer_proj_dim=4)
     with pytest.raises(AssertionError, match="at most 8"):
         attn(torch.randn(1, 9, 32))
+
+
+@pytest.mark.parametrize("option", ["value_residual", "qkv_norm"])
+def test_linformer_rejects_options_it_cannot_honour(option):
+    """Options acting on q, k, v must be refused, not ignored.
+
+    The wrapper holds no q, k or v for the linformer backend, so these once passed silently
+    and a config could ask for value residuals it was never going to get.
+    """
+    with pytest.raises(ValueError, match="linformer"):
+        Attention(dim=16, num_heads=2, attn_type="linformer", linformer_seq_len=8, linformer_proj_dim=4, **{option: True})
+
+    # and are still honoured by every other backend
+    attn = Attention(dim=16, num_heads=2, attn_type="torch", is_first_layer=False, **{option: True})
+    assert hasattr(attn, "value_residual_mix" if option == "value_residual" else "q_norm")
