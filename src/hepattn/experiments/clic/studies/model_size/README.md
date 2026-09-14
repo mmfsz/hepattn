@@ -68,8 +68,39 @@ Same protocol as `main`'s `STUDY.md` §4: jet-energy median and IQR versus jet e
 the host solver, compared with the paper's figures in the **`mpflow_proxy`** convention only, and a
 delta only counts when it clears the training-to-training scatter. **σ_repro has not been measured
 on this code**; the head numbers (0.0029 `mpflow`, 0.0007 proxy, n = 4 seeds) do not transfer.
-Evaluate with `submit_eval_l4.sh` (fp32, torch attention, inference data). Plotting tools will be
-brought over from `main`'s study once the first results exist.
+Evaluate with `submit_eval_l4.sh` (fp32, torch attention, inference data).
+
+**The plotting tools are now here**, ported from `main`'s study 2026-09-14 with paths and the arm
+table repointed at this branch:
+
+| Script | Reads | Where it runs |
+|---|---|---|
+| `arm_sets.py` | — | the single copy of the arm table; `ARM_SET` picks a set, `all` is the only one so far |
+| `plot_size_ablation_jet_iqr.py` | `__test.root` | Tier 1, the verdict. Batch — jet clustering wants 16 cores |
+| `plot_size_ablation_performance.py` | `__test.root` | the breadth check, every other notebook figure. Batch |
+| `plot_size_ablation_training_curves.py` | `metrics.csv` | Tier 0, "did each arm train?". Seconds on a login node |
+| `plot_decoder_layers.py` | `metrics.csv` | the per-layer profile. Seconds on a login node |
+
+The two `.root` readers go through `submit_size_plots.sh`; the two `metrics.csv` readers need no
+evaluation and no batch job.
+
+**One deliberate departure from head's scripts: no verdict column.** Head's jet-IQR script printed
+REAL / not-detectable against thresholds of 0.0073 (global IQR), 0.0164 (high-E) and 0.0170 (low-E).
+Those are properties of head's code, measured from four seed trainings of head's reference, and they
+do not transfer here. Every delta is reported with its bootstrap σ_stat and nothing else — and
+σ_stat is the *smaller* half of the error, the test-sample term only. A delta inside it is certainly
+not real; one outside it is merely not excluded. The two-convention sign check is the strongest
+statement available until a seed set is trained on this code, because it asks for consistency rather
+than significance. The bar an arm must clear is 2·√2·σ_repro, the √2 because both sides are
+independently trained.
+
+**C1 is on the canvas here**, unlike in head's arm table, where it is excluded from every ablation
+set because it failed to train twice. See the results section below.
+
+**Checkpoint selection.** Every arm is read at its own lowest-val_loss checkpoint, head's rule
+throughout. For C4 and C3 that is **not** the last epoch — 189 (4.70576) and 197 (4.83713) against
+199's 4.70814 and 4.83990. The differences are ~0.003 and change nothing, but the arm table records
+the selected stem and the eval jobs were run on it.
 
 ## Run register
 
@@ -133,3 +164,146 @@ measurement and would have truncated runs stepping at 790 ms near epoch 80. The 
 removed the 790 ms step, and the resubmitted round finished inside 9 h with no resume needed.
 Diagnostic runs 41755411 (jv) / 41755412 (host) with `MatcherTimer` attribute the step time. If a
 pre-flight fails, cancel the matching full run (`scancel <job>`), fix, resubmit both.
+
+## Evaluation register
+
+All five arms evaluated 2026-09-14 with `submit_eval_l4.sh` (1× L4, fp32, torch attention,
+inference data, **host** solver — so the eval path is identical across arms and contributes nothing
+to any difference seen). Each arm at its own lowest-val_loss checkpoint.
+
+| Arm | Job | Checkpoint | Elapsed |
+|---|---|---|---|
+| reference (B200, jv) | 41987838 | `epoch=199-val_loss=4.40887` | 00:01:13 |
+| C5 a2a4 | 42119454 | `epoch=199-val_loss=4.62587` | 00:01:15 |
+| C4 a3a4 | 42119469 | `epoch=189-val_loss=4.70576` | 00:01:18 |
+| C3 a2a3 | 42119470 | `epoch=197-val_loss=4.83713` | 00:01:13 |
+| C1 a2a3a4 | 42119459 | `epoch=199-val_loss=4.96997` | 00:01:13 |
+
+All COMPLETED. The reference's evaluation predates this batch — it was run on 2026-09-13 in the
+course of `studies/step_time_gap/`, at the same checkpoint and through the same script, so it is
+the same evaluation the arms get. **Measured eval time is ~1 m 15 s; the script requests 30 min.**
+
+C4 and C3 were first submitted at epoch 199 (jobs 42119457/58) and cancelled before they ran: the
+selection rule is each arm's lowest val_loss, which for those two is epoch 189 and 197. The
+resubmitted jobs are the ones in the table.
+
+Figures: `sbatch --export=ALL,ARM_SET=all studies/model_size/submit_size_plots.sh
+studies/model_size/plot_size_ablation_jet_iqr.py studies/model_size/plot_size_ablation_performance.py`
+(job 42119839).
+
+## Results
+
+### C1 trained. The first question is answered, and the answer is "no".
+
+On head, C1 (A2+A3+A4) failed to train twice over: val `final_classification_object_ce` 1.92 and
+2.13 against the reference's 0.67, a jet-E IQR near 0.4 against a threshold of 0.008, and a third
+of the reference's matched jets. On the paper tag it completed 200 epochs at val_loss 4.96997 and
+is simply the worst arm of five, by a small and ordered margin.
+
+`plot_decoder_layers.py`, at each arm's evaluated checkpoint:
+
+```
+val classification_object_ce   layer_0  layer_1  layer_2  layer_3    final
+reference 820k                  0.8055   0.2372   0.2467   0.2362   0.4670
+C5 a2a4 616k                    0.8191   0.2510   0.2629   0.2470   0.4823
+C4 a3a4 443k                    0.8072   0.2497   0.2579   0.2411   0.5136
+C3 a2a3 369k                    0.8013   0.2468   0.2563   0.2434   0.5405
+C1 a2a3a4 352k                  0.8069   0.2616   0.2696   0.2557   0.5428
+```
+
+Head's last-layer observation survives in graded form, and it is worth keeping: every arm
+*including the reference* degrades from `layer_3` to `final` (0.2362 → 0.4670 for the reference),
+which is a property of the architecture and not of any arm. The arms then fan out about four times
+more at `final` (0.467 → 0.543, a spread of 0.076) than at `layer_3` (0.236 → 0.256, 0.020). So the
+last decoder layer is where shrinking costs most on this code too — it just does not break there.
+
+### Every metric orders monotonically with parameter count
+
+`plot_size_ablation_training_curves.py`, mean over epochs 190–199, each arm minus the reference:
+
+| metric | reference | C5 616k | C4 443k | C3 369k | C1 352k |
+|---|---:|---:|---:|---:|---:|
+| mask exact match | 0.4942 | −0.0153 | −0.0363 | −0.0601 | −0.0625 |
+| mask purity | 0.7785 | −0.0091 | −0.0283 | −0.0471 | −0.0532 |
+| object CE | 0.4667 | +0.0173 | +0.0502 | +0.0730 | +0.0753 |
+| class acc (macro) | 0.8956 | −0.0045 | −0.0081 | −0.0095 | −0.0140 |
+| \|E residual\| | 0.0177 | +0.0007 | +0.0021 | +0.0037 | +0.0045 |
+| val total loss | 4.41349 | +0.220 | +0.297 | +0.426 | +0.560 |
+
+No arm is an outlier and no ordering inverts. That is a different picture from head's round 3,
+where the three pairs trained healthily and only the triple broke.
+
+⚠️ **None of this is the verdict.** These are type-A (loss) numbers: the matcher picks which truth
+particle each query is scored against, so an arm that has learned to choose differently can look
+unchanged in val_loss and still be worse — head's A3 was +0.069 in val_loss, the worst arm there,
+and +0.0006 in global jet-E IQR, i.e. nothing. The ranking comes from the jet-E IQR figure, and
+even that is an ordering rather than a verdict until σ_repro is measured on this code.
+
+### Tier 1: the jet-E IQR (job 42119839)
+
+32,188 matched jets for the reference; 29,330–32,265 across arms. Global jet-E IQR, both
+conventions, with bootstrap σ_stat:
+
+| Arm | params | ratio | IQR `mpflow` | ΔIQR | IQR `proxy` | ΔIQR | σ_stat |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| reference | 819,683 | 1.000× | 0.0827 | — | 0.0601 | — | 0.0006 |
+| C5 a2a4 | 616,219 | 0.752× | 0.0840 | +0.0012 | 0.0632 | +0.0031 | 0.0006 |
+| C4 a3a4 | 443,435 | 0.541× | 0.0926 | +0.0098 | 0.0674 | +0.0073 | 0.0007 |
+| C3 a2a3 | 369,089 | 0.450× | 0.0980 | +0.0153 | 0.0719 | +0.0118 | 0.0007 |
+| C1 a2a3a4 | 352,331 | 0.430× | 0.1006 | +0.0179 | 0.0738 | +0.0137 | 0.0008 |
+
+**The resolution ordering is monotone and both conventions agree on every arm** — the sign check
+passes for global IQR and for high-E IQR across all four arms. C1 does not blow the y-range; it is
+the worst arm at +0.0179, roughly 15× head's C1.
+
+**The damage is resolution, not energy scale.** The global median response moves in *opposite*
+directions between conventions for C4, C3 and C1 (e.g. C1: `mpflow` +0.0057, proxy −0.0029), which
+is the sign check's definition of noise. No arm develops an energy-scale bias.
+
+### A3 is the change that costs; A4 is nearly free
+
+The three pairs plus the triple over-determine a main-effects fit (reference = 0). Solving the
+three pair equations for the individual contributions to ΔIQR (`mpflow`):
+
+| change | what it does | contribution to ΔIQR |
+|---|---|---:|
+| A3 | `dim 64 → 48`, heads 8 → 6 | **+0.0120** |
+| A2 | `hidden_dim_scale 2 → 1` | +0.0034 |
+| A4 | encoder `num_layers 6 → 5` | −0.0022 (free, marginally helpful) |
+
+Every arm containing A3 costs ≥ +0.0098; C5, the one pair without it, costs +0.0012 for a 25%
+parameter cut. **If a cheap shrink is wanted, C5 is it** — a quarter of the parameters for an IQR
+change three-to-five times σ_stat and far below anything head would have called detectable.
+
+The fit also says the triple is **super-additive**: main effects predict C1 at +0.0132, measured
++0.0179, an interaction of +0.0048. Shrinking width and depth together costs more than the sum of
+the parts. That is the paper-tag echo of head's C1 failure — there the interaction was
+catastrophic, here it is a 36% overshoot.
+
+⚠️ **Read this as an ordering, not as verdicts.** σ_stat (~0.0007) is the test-sample term only.
+The bar an arm must clear is 2·√2·σ_repro, and σ_repro is unmeasured on this code; on head it was
+4× larger than σ_stat in `mpflow` and it is the term that decides whether +0.0012 (C5) is
+distinguishable from zero. The main-effects fit inherits that same missing error bar, and it rests
+on four trainings with no replicates — the singles A2/A3/A4 were never trained on this branch.
+
+### Tier 2: the breadth check (job 42120447)
+
+Fourteen figures, seven per convention, in `figures/size_ablation_<convention>_*.png`. The
+criterion is qualitative and comparative — curves must not develop a new turn-over, and per-class
+splits must degrade proportionally rather than one class collapsing. **It passes.**
+
+`eff_fr_purity` is the figure that matters most, because it is the only one that splits by particle
+class and so the only one that can see a failure the jet-E IQR integrates away — the photon and
+neutral-hadron classes are the ones inferred from calorimetry alone, with no track to anchor them:
+
+- **Efficiency is flat at ~1.0** for every arm, both classes, across the whole p_T range. No arm
+  develops a turn-over.
+- **Neutral-hadron fake rate degrades gradually** with size — C1 and C3 sit near 0.31 at high p_T
+  against the reference's ~0.25 — and the photon curves stay clustered near 0.01–0.10 for every
+  arm. Both classes move together; neither collapses. C4 is marginally *below* the reference at
+  high p_T, which is the arms interleaving, not a result.
+- **Class-match purity** interleaves in the 0.90–0.96 band with no arm separating out.
+
+So the cost of shrinking on this code is resolution, spread proportionally across classes — not a
+class collapse and not an efficiency failure. That is the opposite of head's C1, which kept a third
+of the reference's matched jets.
