@@ -282,11 +282,11 @@ it derives from `hybrid_norm`.
 
 **All three act on the real tokens, before the sequence projection.** That is
 what makes them mean what they mean for every other backend: `qkv_norm`
-normalises *a token's* key, not a virtual token's, and the value residual blends
+normalises *a token's* key, not a virtual token's, and the value residual mixes
 this layer's values for a constituent with the first layer's values for that same
 constituent. Compression is a separate, later step applied to the result. Doing
 either after the projection would be a different operation wearing the same
-config name — it would normalise or blend learned mixtures of constituents,
+config name — it would normalise or mix learned combinations of constituents,
 which is not what the paper model does in its other layers.
 
 Two orderings inside that are not interchangeable:

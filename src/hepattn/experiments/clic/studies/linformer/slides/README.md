@@ -27,9 +27,9 @@ cancels in the softmax. That is the `Var(w)` check of the study README 11.5, mad
 
 1. **Masked attention** — the mask is one yes/no per (query, constituent); every column of the
    scores *is* a constituent, so "not constituent 5" has somewhere to point.
-2. **Linformer** — the 6 constituents become 3 learned summaries, each a blend of all of them. No
+2. **Linformer** — the 6 constituents become 3 learned summaries, each a linear combination of all of them. No
    column is constituent 4 any more, which is why the mask cannot come along.
-3. **Step 2** — blend the mask by the same matrix, `w = M|E| / (valid |E|)`, and add `log w` to the
+3. **Step 2** — apply the same linear combination to the mask, `w = M|E| / (valid |E|)`, and add `log w` to the
    scores. Sharp for q1..q3, flat for q4.
 
 4. **The cost model** — which multiplications need a DSP, in symbols. `data × data` is both

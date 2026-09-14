@@ -113,10 +113,10 @@
 #cslide("Linformer: the constituents stop existing")[
   #flow(90pt, 175pt, 1740pt, gap: 0.6cm)[
     Linformer replaces the 6 constituents by #bold[3 learned summaries]. Summary $A$ is a fixed
-    weighted blend of #emph[all] of them, and the same blend in every event.
+    linear combination of #emph[all] of them, with the same coefficients in every event.
   ]
 
-  #at(110pt, 300pt, mat(SUMM, CONST, (
+  #at(110pt, 300pt, mat((text(fill: accent)[A], [B], [C]), CONST, (
     (n[0.8], n[0.1], n[0.1]),
     (n[0.7], n[0.2], n[0.1]),
     (n[0.1], n[0.8], n[0.1]),
@@ -125,9 +125,15 @@
     (n[0.1], n[0.2], n[0.7]),
   ), cellw: 74pt, cellh: 46pt))
   #at(110pt, 272pt, text(size: 22pt, fill: muted)[$E$ — 6 constituents × 3 summaries])
-  #at(110pt, 660pt, box(width: 460pt, text(size: 23pt, fill: muted)[
-    $K'_A = 0.8 K_1 + 0.7 K_2 + 0.1 K_3 + ...$
-  ]))
+  #at(110pt, 655pt, box(width: 520pt)[
+    #text(size: 22pt, fill: muted)[Read #text(fill: accent)[column $A$] downwards — those six
+    numbers #emph[are] its coefficients:]
+    #v(6pt)
+    #text(size: 23pt)[
+      $ K'_A = &0.8 K_1 + 0.7 K_2 + 0.1 K_3 \
+               &+ 0.2 K_4 + 0.1 K_5 + 0.1 K_6 $
+    ]
+  ])
 
   #at(610pt, 290pt, box(width: 1240pt)[
     #set text(size: 26pt)
@@ -162,37 +168,70 @@
 ]
 
 
+#let op(x, y, sym) = at(x, y, text(size: 40pt, fill: muted)[#sym])
+
 #cslide("Step 2: project the mask the same way")[
-  #flow(90pt, 178pt, 1740pt, gap: 0.65cm)[
-    If the keys are blended by $E$, blend the mask by $E$ too: $w = (M |E|) / ("valid" |E|)$ —
-    #bold[the fraction of each summary a query is allowed to see.] Add $log w$ to the scores: 1
-    changes nothing, 0 is the hard mask.
+  #flow(90pt, 172pt, 1740pt, gap: 0.5cm)[
+    $E$ combines the keys. Combine the mask the same way, then divide by what an
+    #bold[unmasked] query would get — so $w$ is #bold[the fraction of each summary a query may see.]
   ]
 
-  #at(110pt, 360pt, mat(SUMM, QUERY, (
-    (n(w: "bold")[0.75], n[0.14], n[0.11]),
-    (n[0.15], n(w: "bold")[0.71], n[0.11]),
-    (n[0.10], n[0.14], n(w: "bold")[0.79]),
-    (n(fill: warn)[0.55], n(fill: warn)[0.48], n(fill: warn)[0.47]),
-  ), cellw: 92pt))
-  #at(110pt, 330pt, text(size: 23pt, fill: muted)[$w$ — 4 queries × 3 summaries])
-
-  #at(640pt, 360pt, box(width: 1190pt)[
-    #set text(size: 27pt)
-    #set list(spacing: 0.7cm)
-    - #text(fill: good)[q1 claims c1, c2 — which are mostly summary $A$.] It keeps a sharp mask:
-      0.75 against 0.14 and 0.11.
-    - #text(fill: warn)[q4 claims c1, c4, c6 — one from each summary.] Its row comes out nearly
-      flat: 0.55, 0.48, 0.47.
+  // M  x  |E|  =  M|E|  ÷ column sums  =  w
+  #at(90pt, 330pt, box[
+    #text(size: 21pt, fill: muted)[$M$ — the mask]
+    #v(3pt)
+    #mat(CONST, QUERY, MASK, cellw: 50pt, cellh: 38pt, size: 21pt, hdrw: 44pt)
   ])
+  #op(500pt, 415pt, [×])
 
-  #at(110pt, 620pt, box(width: 1740pt, fill: panel-fill, inset: 22pt)[
-    #set text(size: 27pt)
-    #bold[The risk, and the test.] A row that is flat across summaries adds the #emph[same]
-    number to every score, and a constant shift #bold[cancels in the softmax] — so for q4 the
-    mask does nothing at all. #linebreak()
-    Before spending a training run, measure how much $w$ varies across summaries. If it is flat
-    everywhere, step 2 is an expensive no-op and the answer is data-dependent summaries instead.
+  #at(560pt, 292pt, box[
+    #text(size: 21pt, fill: muted)[$|E|$]
+    #v(3pt)
+    #mat(SUMM, CONST + (text(size: 18pt, fill: accent)[valid$|E|$],), (
+      (n[0.8], n[0.1], n[0.1]), (n[0.7], n[0.2], n[0.1]), (n[0.1], n[0.8], n[0.1]),
+      (n[0.2], n[0.7], n[0.1]), (n[0.1], n[0.1], n[0.8]), (n[0.1], n[0.2], n[0.7]),
+      (n(fill: accent)[2.0], n(fill: accent)[2.1], n(fill: accent)[1.9]),
+    ), cellw: 58pt, cellh: 38pt, size: 21pt, hdrw: 72pt)
+  ])
+  #op(840pt, 415pt, [=])
+
+  #at(900pt, 330pt, box[
+    #text(size: 21pt, fill: muted)[$M|E|$]
+    #v(3pt)
+    #mat(SUMM, QUERY, (
+      (n[1.5], n[0.3], n[0.2]), (n[0.3], n[1.5], n[0.2]),
+      (n[0.2], n[0.3], n[1.5]), (n[1.1], n[1.0], n[0.9]),
+    ), cellw: 64pt, cellh: 38pt, size: 21pt, hdrw: 44pt)
+  ])
+  #at(1160pt, 392pt, box(width: 170pt, align(center, text(size: 21pt, fill: accent)[
+    normalise #linebreak() by valid$|E|$ #linebreak() #text(size: 34pt)[→]
+  ])))
+
+  #at(1340pt, 330pt, box[
+    #text(size: 21pt, fill: muted)[$w$ — what the query may see]
+    #v(3pt)
+    #mat(SUMM, QUERY, (
+      (n(w: "bold", fill: good)[0.75], n(fill: good)[0.14], n(fill: good)[0.11]),
+      (n[0.15], n(w: "bold")[0.71], n[0.11]),
+      (n[0.10], n[0.14], n(w: "bold")[0.79]),
+      (n(fill: warn)[0.55], n(fill: warn)[0.48], n(fill: warn)[0.47]),
+    ), cellw: 66pt, cellh: 38pt, size: 21pt, hdrw: 44pt)
+  ])
+  #at(1655pt, 432pt, text(size: 22pt, fill: good)[sharp])
+  #at(1655pt, 546pt, text(size: 22pt, fill: warn)[flat])
+
+  #at(90pt, 760pt, box(width: 1740pt, text(size: 26pt)[
+    Then add $log w$ to the scores — $1$ changes nothing, $0$ is the hard mask.
+  ]))
+
+  #at(90pt, 845pt, box(width: 1740pt, fill: panel-fill, inset: 20pt)[
+    #text(size: 26pt)[
+      #text(fill: good)[q1 claims c1, c2 — both mostly summary $A$], so its mask survives.
+      #text(fill: warn)[q4 claims c1, c4, c6 — one from each summary], so its row is flat.
+      #linebreak()
+      #bold[A flat row adds the same number to every score, and a constant cancels in the softmax]
+      — so q4 gets no mask at all. Measure how much $w$ varies before spending a training run.
+    ]
   ])
 ]
 
